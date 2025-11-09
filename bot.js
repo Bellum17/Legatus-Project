@@ -45,9 +45,8 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.log(`🤖 Bot actif sur ${readyClient.guilds.cache.size} serveur(s)`);
     
     // Définir le statut du bot
-    client.user.setActivity('les logs du serveur 🛡️', { type: 3 }); // 3 = WATCHING
-    console.log('🛡️ Statut défini : "Regarde les logs du se
-        rveur 🛡️"');
+    client.user.setActivity('les logs du serveur \u{1F6E1}\uFE0F', { type: 3 }); // 3 = WATCHING (emoji bouclier)
+    console.log('\u{1F6E1}\uFE0F Statut défini : "Regarde les logs du serveur"');
 });
 
 // Gestion des erreurs
