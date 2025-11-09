@@ -5,9 +5,7 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "dev": "nodemon bot.js",
-    "build": "npm ci --omit=dev",
-    "railway:start": "node bot.js"
+    "dev": "nodemon bot.js"
   },
   "engines": {
     "node": ">=18.0.0",
