@@ -279,7 +279,7 @@ client.once(Events.ClientReady, async (readyClient) => {
             Routes.applicationCommands(readyClient.user.id),
             { body: commands }
         );
-        console.log('✅ Commandes slash enregistrées avec succès');
+        console.log(`✅ Commandes slash enregistrées avec succès (${commands.length})`);
     } catch (error) {
         console.error('❌ Erreur lors de l\'enregistrement des commandes:', error);
     }
@@ -411,8 +411,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             await interaction.editReply({
                 embeds: [new EmbedBuilder()
                     .setColor('#af6b6b')
-                    .setTitle('🗑️ | Messages supprimés')
-                    .setDescription(`**${totalDeleted}** message${totalDeleted > 1 ? 's ont été supprimés' : ' a été supprimé'}.`)],
+                    .setTitle('<:DO_Icone_Poubelle:1438988714624680079> | Messages supprimés')
+                    .setDescription(`> ${totalDeleted} message${totalDeleted > 1 ? 's ont été supprimés' : ' a été supprimé'}.`)],
                 ephemeral: true
             });
 
