@@ -60,44 +60,60 @@ function generateCaptcha() {
 
 // Fonction pour créer l'image du captcha
 function createCaptchaImage(text) {
-    const canvas = createCanvas(300, 100);
+    const canvas = createCanvas(400, 150);
     const ctx = canvas.getContext('2d');
 
     // Fond gris
     ctx.fillStyle = '#808080';
-    ctx.fillRect(0, 0, 300, 100);
+    ctx.fillRect(0, 0, 400, 150);
 
-    // Ajouter du bruit
-    for (let i = 0; i < 100; i++) {
+    // Ajouter du bruit de fond
+    for (let i = 0; i < 150; i++) {
         ctx.fillStyle = `rgba(${Math.random() * 100 + 100}, ${Math.random() * 100 + 100}, ${Math.random() * 100 + 100}, 0.3)`;
-        ctx.fillRect(Math.random() * 300, Math.random() * 100, 2, 2);
+        ctx.fillRect(Math.random() * 400, Math.random() * 150, 3, 3);
     }
 
-    // Dessiner le texte
-    ctx.font = 'bold 48px Arial';
+    // Configuration du texte avec police système sans-serif
     ctx.fillStyle = '#FFFFFF';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     
-    // Ajouter une légère rotation et distorsion pour chaque lettre
-    const startX = 50;
+    // Dessiner chaque caractère avec rotation et position aléatoire
+    const spacing = 60;
+    const startX = 70;
+    
     for (let i = 0; i < text.length; i++) {
         ctx.save();
-        const x = startX + (i * 40);
-        const y = 50 + (Math.random() - 0.5) * 10;
+        
+        // Position avec variation aléatoire
+        const x = startX + (i * spacing);
+        const y = 75 + (Math.random() - 0.5) * 15;
+        
+        // Rotation aléatoire
         ctx.translate(x, y);
-        ctx.rotate((Math.random() - 0.5) * 0.4);
+        ctx.rotate((Math.random() - 0.5) * 0.3);
+        
+        // Taille de police variable
+        const fontSize = 55 + Math.random() * 10;
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        
+        // Dessiner le caractère
         ctx.fillText(text[i], 0, 0);
+        
         ctx.restore();
     }
 
     // Ajouter des lignes de bruit
-    for (let i = 0; i < 5; i++) {
-        ctx.strokeStyle = `rgba(255, 255, 255, ${Math.random() * 0.3 + 0.1})`;
-        ctx.lineWidth = 2;
+    for (let i = 0; i < 6; i++) {
+        ctx.strokeStyle = `rgba(255, 255, 255, ${Math.random() * 0.4 + 0.1})`;
+        ctx.lineWidth = 2 + Math.random() * 2;
         ctx.beginPath();
-        ctx.moveTo(Math.random() * 300, Math.random() * 100);
-        ctx.lineTo(Math.random() * 300, Math.random() * 100);
+        ctx.moveTo(Math.random() * 400, Math.random() * 150);
+        ctx.bezierCurveTo(
+            Math.random() * 400, Math.random() * 150,
+            Math.random() * 400, Math.random() * 150,
+            Math.random() * 400, Math.random() * 150
+        );
         ctx.stroke();
     }
 
