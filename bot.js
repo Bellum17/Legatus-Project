@@ -33,14 +33,36 @@ app.listen(PORT, () => {
 });
 
 // Configuration PostgreSQL
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
-});
+// Railway fournit soit DATABASE_URL, soit des variables séparées
+const pool = new Pool(
+    process.env.DATABASE_URL
+        ? {
+              connectionString: process.env.DATABASE_URL,
+              ssl: { rejectUnauthorized: false }
+          }
+        : {
+              host: process.env.PGHOST,
+              port: process.env.PGPORT || 5432,
+              database: process.env.PGDATABASE,
+              user: process.env.PGUSER,
+              password: process.env.PGPASSWORD,
+              ssl: { rejectUnauthorized: false }
+          }
+);
 
 // Fonction pour initialiser la base de données
 async function initDatabase() {
+    // Vérifier si PostgreSQL est configuré
+    if (!process.env.DATABASE_URL && !process.env.PGHOST) {
+        console.warn('⚠️ PostgreSQL non configuré - Les données ne seront pas persistées');
+        return false;
+    }
+
     try {
+        // Test de connexion
+        await pool.query('SELECT NOW()');
+        console.log('🔌 Connexion PostgreSQL établie');
+
         await pool.query(`
             CREATE TABLE IF NOT EXISTS captcha_config (
                 guild_id VARCHAR(20) PRIMARY KEY,
@@ -73,8 +95,11 @@ async function initDatabase() {
         `);
         
         console.log('✅ Base de données PostgreSQL initialisée');
+        return true;
     } catch (error) {
-        console.error('❌ Erreur lors de l\'initialisation de la base de données:', error);
+        console.error('❌ Erreur lors de l\'initialisation de la base de données:', error.message);
+        console.warn('⚠️ Le bot fonctionnera sans persistance des données');
+        return false;
     }
 }
 
