@@ -390,7 +390,6 @@ client.on(Events.GuildMemberAdd, async (member) => {
             .setTitle('<:DO_Icone_Cle:1436971786418786395> | Captcha du serveur')
             .setDescription(`> Merci de remplir le Captcha ci-joint, pour ce faire, voici les conditions :\n> <:DO_Icone_Cle:1436971786418786395> | Tapez le captcha en majuscules uniquement.\n> <:DO_Icone_Valide:1436967853801869322> | Une fois tapé, vous obtiendrez le rôle <@&1438937587141185711> et vous pourrez accéder au reste du serveur.`)
             .setImage('attachment://captcha.png')
-            .setFooter({ text: 'Tentative 1/3 avant bannissement' })
             .setTimestamp();
 
         const captchaMessage = await channel.send({
