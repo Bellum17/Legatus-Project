@@ -309,8 +309,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             await interaction.reply({
                 embeds: [new EmbedBuilder()
-                    .setColor(0x00FF00)
-                    .setTitle('✅ Captcha activé')
+                    .setColor('#af6b6b')
+                    .setTitle('<:DO_Icone_Valide:1436967853801869322> | Captcha activé')
                     .setDescription(`Le système de captcha a été activé !\n\n**Salon :** ${channel}\n**Rôle captcha :** ${captchaRole}\n**Rôle vérifié :** ${verifiedRole}`)
                     .setTimestamp()],
                 ephemeral: true
@@ -337,8 +337,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             await interaction.reply({
                 embeds: [new EmbedBuilder()
-                    .setColor(0xFF0000)
-                    .setTitle('❌ Captcha désactivé')
+                    .setColor('#af6b6b')
+                    .setTitle('<:DO_Icone_Cle:1436971786418786395> | Captcha désactivé')
                     .setDescription('Le système de captcha a été désactivé.')
                     .setTimestamp()],
                 ephemeral: true
@@ -386,9 +386,9 @@ client.on(Events.GuildMemberAdd, async (member) => {
         const attachment = new AttachmentBuilder(captchaImage, { name: 'captcha.png' });
         
         const embed = new EmbedBuilder()
-            .setColor(0x5865F2)
-            .setTitle('🛡️ Vérification de sécurité')
-            .setDescription(`Bienvenue ${member} !\n\nPour accéder au serveur, veuillez résoudre le captcha ci-dessous.\n\n**Instructions :**\n• Regardez l'image et entrez le code visible\n• Vous avez 3 tentatives\n• Le code contient 6 caractères\n• Tapez simplement le code dans ce salon\n\n⚠️ **Attention :** Après 3 tentatives ratées, vous serez banni définitivement !`)
+            .setColor('#af6b6b')
+            .setTitle('<:DO_Icone_Cle:1436971786418786395> | Captcha du serveur')
+            .setDescription(`Merci de remplir le Captcha ci-joint, pour ce faire, voici les conditions :\n> <:DO_Icone_Cle:1436971786418786395> | Tapez le captcha en majuscules uniquement.\n> <:DO_Icone_Valide:1436967853801869322> | Une fois tapé, vous obtiendrez le rôle <@&1438937587141185711> et vous pourrez accéder au reste du serveur.`)
             .setImage('attachment://captcha.png')
             .setFooter({ text: 'Tentative 1/3 avant bannissement' })
             .setTimestamp();
@@ -542,8 +542,8 @@ client.on(Events.MessageCreate, async (message) => {
                 }
                 
                 const successEmbed = new EmbedBuilder()
-                    .setColor(0x00FF00)
-                    .setTitle('✅ Captcha validé !')
+                    .setColor('#af6b6b')
+                    .setTitle('<:DO_Icone_Valide:1436967853801869322> | Captcha validé !')
                     .setDescription(`${message.author}, vous avez été vérifié avec succès !\nVous avez maintenant accès au serveur.`)
                     .setTimestamp();
 
@@ -582,8 +582,8 @@ client.on(Events.MessageCreate, async (message) => {
                 const member = message.guild.members.cache.get(message.author.id);
                 
                 const failEmbed = new EmbedBuilder()
-                    .setColor(0xFF0000)
-                    .setTitle('❌ Échec du captcha')
+                    .setColor('#af6b6b')
+                    .setTitle('<:DO_Icone_Cle:1436971786418786395> | Échec du captcha')
                     .setDescription(`${message.author}, vous avez épuisé vos 3 tentatives.\nVous allez être banni du serveur définitivement.`)
                     .setTimestamp();
 
@@ -631,8 +631,8 @@ client.on(Events.MessageCreate, async (message) => {
             const attachment = new AttachmentBuilder(captchaImage, { name: 'captcha.png' });
             
             const retryEmbed = new EmbedBuilder()
-                .setColor(0xFFA500)
-                .setTitle('❌ Code incorrect')
+                .setColor('#af6b6b')
+                .setTitle('<:DO_Icone_Cle:1436971786418786395> | Code incorrect')
                 .setDescription(`${message.author}, le code est incorrect.\n\nVeuillez réessayer avec le nouveau captcha ci-dessous.\n\n**Tentatives restantes :** ${3 - captchaData.attempts}`)
                 .setImage('attachment://captcha.png')
                 .setTimestamp();
