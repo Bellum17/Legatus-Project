@@ -584,7 +584,7 @@ client.on(Events.MessageCreate, async (message) => {
                 const failEmbed = new EmbedBuilder()
                     .setColor('#af6b6b')
                     .setTitle('<:DO_Icone_Cle:1436971786418786395> | Échec du captcha')
-                    .setDescription(`${message.author}, vous avez épuisé vos 3 tentatives.\nVous allez être banni du serveur définitivement.`);
+                    .setDescription(`> ${message.author} est banni du serveur. L'utilisateur a épuisé ses tentatives.`);
 
                 await message.channel.send({ embeds: [failEmbed] });
                 
@@ -632,7 +632,7 @@ client.on(Events.MessageCreate, async (message) => {
             const retryEmbed = new EmbedBuilder()
                 .setColor('#af6b6b')
                 .setTitle('<:DO_Icone_Cle:1436971786418786395> | Code incorrect')
-                .setDescription(`${message.author}, le code est incorrect.\n\nVeuillez réessayer avec le nouveau captcha ci-dessous.\n\n**Tentatives restantes :** ${3 - captchaData.attempts}`)
+                .setDescription(`> ${message.author}, le code est incorrect. Veuillez réessayer, il vous reste ${3 - captchaData.attempts} tentative${3 - captchaData.attempts > 1 ? 's' : ''}.`)
                 .setImage('attachment://captcha.png');
 
             const newCaptchaMessage = await message.channel.send({
