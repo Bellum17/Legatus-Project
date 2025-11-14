@@ -257,7 +257,18 @@ client.once(Events.ClientReady, async (readyClient) => {
                 subcommand
                     .setName('désactiver')
                     .setDescription('Désactiver le système de captcha'))
-            .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+            .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        new SlashCommandBuilder()
+            .setName('purge')
+            .setDescription('Supprimer un nombre défini de messages')
+            .addIntegerOption(option =>
+                option
+                    .setName('nombre')
+                    .setDescription('Le nombre de messages à supprimer (1-10000)')
+                    .setRequired(true)
+                    .setMinValue(1)
+                    .setMaxValue(10000))
+            .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
     ].map(command => command.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -348,6 +359,78 @@ client.on(Events.InteractionCreate, async (interaction) => {
             });
 
             console.log(`🛡️ Captcha désactivé sur ${interaction.guild.name}`);
+        }
+    }
+
+    if (interaction.commandName === 'purge') {
+        const nombre = interaction.options.getInteger('nombre');
+
+        try {
+            await interaction.deferReply({ ephemeral: true });
+
+            const channel = interaction.channel;
+            let totalDeleted = 0;
+            
+            // Discord limite la suppression en masse à 100 messages à la fois
+            // et les messages de plus de 14 jours ne peuvent pas être supprimés en masse
+            while (totalDeleted < nombre) {
+                const toDelete = Math.min(100, nombre - totalDeleted);
+                
+                const messages = await channel.messages.fetch({ limit: toDelete });
+                
+                if (messages.size === 0) break;
+
+                // Séparer les messages récents (< 14 jours) des anciens
+                const recentMessages = messages.filter(msg => 
+                    Date.now() - msg.createdTimestamp < 14 * 24 * 60 * 60 * 1000
+                );
+                const oldMessages = messages.filter(msg => 
+                    Date.now() - msg.createdTimestamp >= 14 * 24 * 60 * 60 * 1000
+                );
+
+                // Supprimer les messages récents en masse
+                if (recentMessages.size > 0) {
+                    await channel.bulkDelete(recentMessages, true);
+                    totalDeleted += recentMessages.size;
+                }
+
+                // Supprimer les anciens messages un par un
+                for (const [, msg] of oldMessages) {
+                    try {
+                        await msg.delete();
+                        totalDeleted++;
+                    } catch (error) {
+                        console.error('Erreur lors de la suppression d\'un message ancien:', error);
+                    }
+                }
+
+                // Si on n'a pas pu supprimer tous les messages demandés, arrêter
+                if (messages.size < toDelete) break;
+            }
+
+            await interaction.editReply({
+                embeds: [new EmbedBuilder()
+                    .setColor('#af6b6b')
+                    .setTitle('🗑️ | Messages supprimés')
+                    .setDescription(`**${totalDeleted}** message${totalDeleted > 1 ? 's ont été supprimés' : ' a été supprimé'}.`)],
+                ephemeral: true
+            });
+
+            console.log(`🗑️ ${totalDeleted} messages supprimés dans ${channel.name} par ${interaction.user.tag}`);
+
+        } catch (error) {
+            console.error('Erreur lors de la suppression des messages:', error);
+            
+            const errorEmbed = new EmbedBuilder()
+                .setColor('#af6b6b')
+                .setTitle('❌ | Erreur')
+                .setDescription('Une erreur est survenue lors de la suppression des messages.');
+
+            if (interaction.deferred) {
+                await interaction.editReply({ embeds: [errorEmbed], ephemeral: true });
+            } else {
+                await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+            }
         }
     }
 });
@@ -554,7 +637,10 @@ client.on(Events.MessageCreate, async (message) => {
                     try {
                         await successMessage.delete();
                     } catch (err) {
-                        console.error('❌ Erreur lors de la suppression du message de succès:', err);
+                        // Ignorer l'erreur si le message a déjà été supprimé
+                        if (err.code !== 10008) {
+                            console.error('❌ Erreur lors de la suppression du message de succès:', err);
+                        }
                     }
                 }, 10000);
                 
@@ -596,7 +682,10 @@ client.on(Events.MessageCreate, async (message) => {
                         try {
                             await failMessage.delete();
                         } catch (error) {
-                            console.error('❌ Erreur lors de la suppression du message d\'échec:', error);
+                            // Ignorer l'erreur si le message a déjà été supprimé
+                            if (error.code !== 10008) {
+                                console.error('❌ Erreur lors de la suppression du message d\'échec:', error);
+                            }
                         }
                     }, 10000);
                     
@@ -629,7 +718,10 @@ client.on(Events.MessageCreate, async (message) => {
                     }
                 }
             } catch (error) {
-                console.error('❌ Erreur lors de la suppression de l\'ancien captcha:', error);
+                // Ignorer l'erreur si le message a déjà été supprimé
+                if (error.code !== 10008) {
+                    console.error('❌ Erreur lors de la suppression de l\'ancien captcha:', error);
+                }
             }
             
             const captchaText = generateCaptcha();
@@ -655,7 +747,10 @@ client.on(Events.MessageCreate, async (message) => {
                 try {
                     await newCaptchaMessage.delete();
                 } catch (error) {
-                    console.error('❌ Erreur lors de la suppression du message d\'erreur:', error);
+                    // Ignorer l'erreur si le message a déjà été supprimé
+                    if (error.code !== 10008) {
+                        console.error('❌ Erreur lors de la suppression du message d\'erreur:', error);
+                    }
                 }
             }, 5000);
             
