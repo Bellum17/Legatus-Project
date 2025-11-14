@@ -149,25 +149,30 @@ function createCaptchaImage(text) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     
-    // Dessiner chaque caractère avec rotation et position aléatoire
+    // Dessiner chaque caractère avec rotation et position aléatoire + distorsion
     const spacing = 60;
     const startX = 70;
     
     for (let i = 0; i < text.length; i++) {
         ctx.save();
         
-        // Position avec variation aléatoire
-        const x = startX + (i * spacing);
-        const y = 75 + (Math.random() - 0.5) * 15;
+        // Position avec variation aléatoire accrue
+        const x = startX + (i * spacing) + (Math.random() - 0.5) * 10;
+        const y = 75 + (Math.random() - 0.5) * 25;
         
-        // Rotation aléatoire
+        // Rotation aléatoire plus prononcée
         ctx.translate(x, y);
-        ctx.rotate((Math.random() - 0.5) * 0.3);
+        ctx.rotate((Math.random() - 0.5) * 0.5);
         
         // Taille de police variable avec plusieurs polices en fallback
-        const fontSize = 55 + Math.random() * 10;
+        const fontSize = 50 + Math.random() * 15;
         // Essayer plusieurs polices courantes qui devraient être disponibles
         ctx.font = `bold ${fontSize}px "DejaVu Sans", "Arial", "Helvetica", "sans-serif"`;
+        
+        // Distorsion horizontale/verticale légère
+        const scaleX = 0.9 + Math.random() * 0.2;
+        const scaleY = 0.9 + Math.random() * 0.2;
+        ctx.scale(scaleX, scaleY);
         
         // Dessiner le caractère avec contour pour plus de visibilité
         ctx.strokeStyle = '#FFFFFF';
