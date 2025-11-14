@@ -6,6 +6,7 @@ const { Client, GatewayIntentBits, Events, SlashCommandBuilder, REST, Routes, Em
 const axios = require('axios');
 const express = require('express');
 const { createCanvas, registerFont } = require('canvas');
+const { Pool } = require('pg');
 
 // Configuration du serveur Express pour Railway
 const app = express();
@@ -31,11 +32,55 @@ app.listen(PORT, () => {
     console.log(`🌐 Serveur web démarré sur le port ${PORT}`);
 });
 
-// Stockage des configurations de captcha par serveur
+// Configuration PostgreSQL
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+});
+
+// Fonction pour initialiser la base de données
+async function initDatabase() {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS captcha_config (
+                guild_id VARCHAR(20) PRIMARY KEY,
+                channel_id VARCHAR(20) NOT NULL,
+                captcha_role_id VARCHAR(20) NOT NULL,
+                verified_role_id VARCHAR(20) NOT NULL,
+                enabled BOOLEAN DEFAULT true,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS failed_attempts (
+                user_id VARCHAR(20) PRIMARY KEY,
+                attempts INTEGER DEFAULT 0,
+                last_attempt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS active_captchas (
+                user_id VARCHAR(20) PRIMARY KEY,
+                guild_id VARCHAR(20) NOT NULL,
+                captcha_text VARCHAR(10) NOT NULL,
+                attempts INTEGER DEFAULT 0,
+                message_id VARCHAR(20),
+                channel_id VARCHAR(20),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        
+        console.log('✅ Base de données PostgreSQL initialisée');
+    } catch (error) {
+        console.error('❌ Erreur lors de l\'initialisation de la base de données:', error);
+    }
+}
+
+// Stockage temporaire en cache (pour performance)
 const captchaConfig = new Map();
-// Stockage des tentatives échouées par utilisateur
 const failedAttempts = new Map();
-// Stockage des captchas en cours
 const activeCaptchas = new Map();
 
 // Création du client Discord avec les intentions de base
@@ -133,6 +178,25 @@ client.once(Events.ClientReady, async (readyClient) => {
     client.user.setActivity('les logs du serveur \u{1F6E1}\uFE0F', { type: 3 }); // 3 = WATCHING (emoji bouclier)
     console.log('\u{1F6E1}\uFE0F Statut défini : "Regarde les logs du serveur"');
 
+    // Initialiser la base de données
+    await initDatabase();
+    
+    // Charger les configurations depuis la base de données
+    try {
+        const result = await pool.query('SELECT * FROM captcha_config WHERE enabled = true');
+        for (const row of result.rows) {
+            captchaConfig.set(row.guild_id, {
+                channelId: row.channel_id,
+                captchaRoleId: row.captcha_role_id,
+                verifiedRoleId: row.verified_role_id,
+                enabled: row.enabled
+            });
+        }
+        console.log(`📊 ${result.rows.length} configuration(s) de captcha chargée(s)`);
+    } catch (error) {
+        console.error('❌ Erreur lors du chargement des configurations:', error);
+    }
+
     // Enregistrer les commandes slash
     const commands = [
         new SlashCommandBuilder()
@@ -150,7 +214,12 @@ client.once(Events.ClientReady, async (readyClient) => {
                             .addChannelTypes(ChannelType.GuildText))
                     .addRoleOption(option =>
                         option
-                            .setName('role')
+                            .setName('role_captcha')
+                            .setDescription('Le rôle de captcha (donné aux nouveaux membres)')
+                            .setRequired(true))
+                    .addRoleOption(option =>
+                        option
+                            .setName('role_vérifié')
                             .setDescription('Le rôle à donner après validation du captcha')
                             .setRequired(true)))
             .addSubcommand(subcommand =>
@@ -183,11 +252,32 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (subcommand === 'activer') {
             const channel = interaction.options.getChannel('salon');
-            const role = interaction.options.getRole('role');
+            const captchaRole = interaction.options.getRole('role_captcha');
+            const verifiedRole = interaction.options.getRole('role_vérifié');
 
+            // Sauvegarder dans PostgreSQL
+            try {
+                await pool.query(`
+                    INSERT INTO captcha_config (guild_id, channel_id, captcha_role_id, verified_role_id, enabled)
+                    VALUES ($1, $2, $3, $4, true)
+                    ON CONFLICT (guild_id)
+                    DO UPDATE SET 
+                        channel_id = $2,
+                        captcha_role_id = $3,
+                        verified_role_id = $4,
+                        enabled = true
+                `, [interaction.guildId, channel.id, captchaRole.id, verifiedRole.id]);
+                
+                console.log('💾 Configuration sauvegardée dans PostgreSQL');
+            } catch (error) {
+                console.error('❌ Erreur lors de la sauvegarde dans PostgreSQL:', error);
+            }
+
+            // Mettre à jour le cache
             captchaConfig.set(interaction.guildId, {
                 channelId: channel.id,
-                roleId: role.id,
+                captchaRoleId: captchaRole.id,
+                verifiedRoleId: verifiedRole.id,
                 enabled: true
             });
 
@@ -195,14 +285,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 embeds: [new EmbedBuilder()
                     .setColor(0x00FF00)
                     .setTitle('✅ Captcha activé')
-                    .setDescription(`Le système de captcha a été activé !\n\n**Salon :** ${channel}\n**Rôle :** ${role}`)
+                    .setDescription(`Le système de captcha a été activé !\n\n**Salon :** ${channel}\n**Rôle captcha :** ${captchaRole}\n**Rôle vérifié :** ${verifiedRole}`)
                     .setTimestamp()],
                 ephemeral: true
             });
 
-            console.log(`🛡️ Captcha activé sur ${interaction.guild.name} - Salon: ${channel.name} - Rôle: ${role.name}`);
+            console.log(`🛡️ Captcha activé sur ${interaction.guild.name} - Salon: ${channel.name} - Rôle captcha: ${captchaRole.name} - Rôle vérifié: ${verifiedRole.name}`);
 
         } else if (subcommand === 'désactiver') {
+            // Désactiver dans PostgreSQL
+            try {
+                await pool.query(`
+                    UPDATE captcha_config
+                    SET enabled = false
+                    WHERE guild_id = $1
+                `, [interaction.guildId]);
+                
+                console.log('💾 Configuration désactivée dans PostgreSQL');
+            } catch (error) {
+                console.error('❌ Erreur lors de la désactivation dans PostgreSQL:', error);
+            }
+
+            // Supprimer du cache
             captchaConfig.delete(interaction.guildId);
 
             await interaction.reply({
@@ -226,8 +330,18 @@ client.on(Events.GuildMemberAdd, async (member) => {
 
     const userId = member.user.id;
     
-    // Vérifier si l'utilisateur a déjà échoué 3 fois
-    const attempts = failedAttempts.get(userId) || 0;
+    // Vérifier si l'utilisateur a déjà échoué 3 fois dans la base de données
+    let attempts = 0;
+    try {
+        const result = await pool.query('SELECT attempts FROM failed_attempts WHERE user_id = $1', [userId]);
+        if (result.rows.length > 0) {
+            attempts = result.rows[0].attempts;
+            failedAttempts.set(userId, attempts); // Mettre à jour le cache
+        }
+    } catch (error) {
+        console.error('❌ Erreur lors de la récupération des tentatives:', error);
+    }
+    
     if (attempts >= 3) {
         try {
             await member.ban({ reason: 'Échec du captcha 3 fois' });
@@ -243,7 +357,7 @@ client.on(Events.GuildMemberAdd, async (member) => {
 
     // Attribuer le rôle de captcha au membre
     try {
-        const captchaRole = member.guild.roles.cache.get(config.roleId);
+        const captchaRole = member.guild.roles.cache.get(config.captchaRoleId);
         if (captchaRole) {
             await member.roles.add(captchaRole);
             console.log(`🔐 Rôle de captcha attribué à ${member.user.tag}`);
@@ -256,12 +370,13 @@ client.on(Events.GuildMemberAdd, async (member) => {
     const captchaText = generateCaptcha();
     const captchaImage = createCaptchaImage(captchaText);
     
-    // Stocker le captcha
+    // Stocker le captcha dans le cache
     activeCaptchas.set(userId, {
         text: captchaText,
         guildId: member.guild.id,
         attempts: 0,
-        messageId: null
+        messageId: null,
+        channelId: null
     });
 
     try {
@@ -281,9 +396,28 @@ client.on(Events.GuildMemberAdd, async (member) => {
             files: [attachment]
         });
 
-        // Stocker l'ID du message pour le supprimer plus tard
-        activeCaptchas.get(userId).messageId = captchaMessage.id;
-        activeCaptchas.get(userId).channelId = channel.id;
+        // Mettre à jour le captcha avec les IDs
+        const captchaData = activeCaptchas.get(userId);
+        captchaData.messageId = captchaMessage.id;
+        captchaData.channelId = channel.id;
+
+        // Sauvegarder le captcha actif dans PostgreSQL
+        try {
+            await pool.query(`
+                INSERT INTO active_captchas (user_id, guild_id, captcha_text, attempts, message_id, channel_id)
+                VALUES ($1, $2, $3, 0, $4, $5)
+                ON CONFLICT (user_id)
+                DO UPDATE SET 
+                    guild_id = $2,
+                    captcha_text = $3,
+                    attempts = 0,
+                    message_id = $4,
+                    channel_id = $5,
+                    created_at = CURRENT_TIMESTAMP
+            `, [userId, member.guild.id, captchaText, captchaMessage.id, channel.id]);
+        } catch (error) {
+            console.error('❌ Erreur lors de la sauvegarde du captcha:', error);
+        }
 
         console.log(`🛡️ Captcha envoyé à ${member.user.tag} sur ${member.guild.name}`);
 
@@ -349,15 +483,30 @@ client.on(Events.MessageCreate, async (message) => {
             console.error('❌ Erreur lors de la suppression du message de captcha:', error);
         }
         
+        // Supprimer du cache et de la base de données
         activeCaptchas.delete(message.author.id);
         
         try {
+            await pool.query('DELETE FROM active_captchas WHERE user_id = $1', [message.author.id]);
+        } catch (error) {
+            console.error('❌ Erreur lors de la suppression du captcha de la BDD:', error);
+        }
+        
+        try {
             const member = message.guild.members.cache.get(message.author.id);
-            const role = message.guild.roles.cache.get(config.roleId);
+            const captchaRole = message.guild.roles.cache.get(config.captchaRoleId);
+            const verifiedRole = message.guild.roles.cache.get(config.verifiedRoleId);
             
-            if (member && role) {
-                // Retirer le rôle de captcha (le membre a validé)
-                await member.roles.remove(role);
+            if (member) {
+                // Retirer le rôle de captcha
+                if (captchaRole) {
+                    await member.roles.remove(captchaRole);
+                }
+                
+                // Ajouter le rôle vérifié
+                if (verifiedRole) {
+                    await member.roles.add(verifiedRole);
+                }
                 
                 const successEmbed = new EmbedBuilder()
                     .setColor(0x00FF00)
@@ -379,7 +528,7 @@ client.on(Events.MessageCreate, async (message) => {
                 console.log(`✅ ${message.author.tag} a réussi le captcha sur ${message.guild.name}`);
             }
         } catch (error) {
-            console.error('❌ Erreur lors du retrait du rôle:', error);
+            console.error('❌ Erreur lors de l\'attribution des rôles:', error);
         }
     } else {
         // Mauvaise réponse
@@ -388,8 +537,32 @@ client.on(Events.MessageCreate, async (message) => {
         if (captchaData.attempts >= 3) {
             // Kick après 3 tentatives
             activeCaptchas.delete(message.author.id);
+            
+            // Supprimer de la base de données
+            try {
+                await pool.query('DELETE FROM active_captchas WHERE user_id = $1', [message.author.id]);
+            } catch (error) {
+                console.error('❌ Erreur lors de la suppression du captcha de la BDD:', error);
+            }
+            
             const totalAttempts = (failedAttempts.get(message.author.id) || 0) + 1;
             failedAttempts.set(message.author.id, totalAttempts);
+            
+            // Sauvegarder les tentatives échouées dans PostgreSQL
+            try {
+                await pool.query(`
+                    INSERT INTO failed_attempts (user_id, attempts, last_attempt)
+                    VALUES ($1, $2, CURRENT_TIMESTAMP)
+                    ON CONFLICT (user_id)
+                    DO UPDATE SET 
+                        attempts = $2,
+                        last_attempt = CURRENT_TIMESTAMP
+                `, [message.author.id, totalAttempts]);
+                
+                console.log(`💾 Tentatives échouées sauvegardées: ${totalAttempts}/3`);
+            } catch (error) {
+                console.error('❌ Erreur lors de la sauvegarde des tentatives:', error);
+            }
             
             try {
                 const member = message.guild.members.cache.get(message.author.id);
@@ -443,6 +616,17 @@ client.on(Events.MessageCreate, async (message) => {
             
             // Mettre à jour l'ID du nouveau message
             captchaData.messageId = newCaptchaMessage.id;
+            
+            // Mettre à jour dans PostgreSQL
+            try {
+                await pool.query(`
+                    UPDATE active_captchas
+                    SET captcha_text = $1, attempts = $2, message_id = $3
+                    WHERE user_id = $4
+                `, [captchaText, captchaData.attempts, newCaptchaMessage.id, message.author.id]);
+            } catch (error) {
+                console.error('❌ Erreur lors de la mise à jour du captcha dans la BDD:', error);
+            }
             
             console.log(`⚠️ ${message.author.tag} a raté une tentative (${captchaData.attempts}/3)`);
         }
