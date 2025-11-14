@@ -354,29 +354,6 @@ client.on(Events.GuildMemberAdd, async (member) => {
     if (!config || !config.enabled) return;
 
     const userId = member.user.id;
-    
-    // Vérifier si l'utilisateur a déjà échoué 3 fois dans la base de données
-    let attempts = 0;
-    try {
-        const result = await pool.query('SELECT attempts FROM failed_attempts WHERE user_id = $1', [userId]);
-        if (result.rows.length > 0) {
-            attempts = result.rows[0].attempts;
-            failedAttempts.set(userId, attempts); // Mettre à jour le cache
-        }
-    } catch (error) {
-        console.error('❌ Erreur lors de la récupération des tentatives:', error);
-    }
-    
-    if (attempts >= 3) {
-        try {
-            await member.ban({ reason: 'Échec du captcha 3 fois' });
-            console.log(`🚫 ${member.user.tag} banni définitivement après 3 échecs`);
-            return;
-        } catch (error) {
-            console.error('❌ Erreur lors du bannissement:', error);
-        }
-    }
-
     const channel = member.guild.channels.cache.get(config.channelId);
     if (!channel) return;
 
@@ -410,9 +387,9 @@ client.on(Events.GuildMemberAdd, async (member) => {
         const embed = new EmbedBuilder()
             .setColor(0x5865F2)
             .setTitle('🛡️ Vérification de sécurité')
-            .setDescription(`Bienvenue ${member} !\n\nPour accéder au serveur, veuillez résoudre le captcha ci-dessous.\n\n**Instructions :**\n• Regardez l'image et entrez le code visible\n• Vous avez 3 tentatives\n• Le code contient 6 caractères\n• Tapez simplement le code dans ce salon`)
+            .setDescription(`Bienvenue ${member} !\n\nPour accéder au serveur, veuillez résoudre le captcha ci-dessous.\n\n**Instructions :**\n• Regardez l'image et entrez le code visible\n• Vous avez 3 tentatives\n• Le code contient 6 caractères\n• Tapez simplement le code dans ce salon\n\n⚠️ **Attention :** Après 3 tentatives ratées, vous serez banni définitivement !`)
             .setImage('attachment://captcha.png')
-            .setFooter({ text: `Tentative ${attempts + 1}/3 avant bannissement` })
+            .setFooter({ text: 'Tentative 1/3 avant bannissement' })
             .setTimestamp();
 
         const captchaMessage = await channel.send({
@@ -560,7 +537,7 @@ client.on(Events.MessageCreate, async (message) => {
         captchaData.attempts++;
         
         if (captchaData.attempts >= 3) {
-            // Kick après 3 tentatives
+            // Ban après 3 tentatives
             activeCaptchas.delete(message.author.id);
             
             // Supprimer de la base de données
@@ -570,42 +547,23 @@ client.on(Events.MessageCreate, async (message) => {
                 console.error('❌ Erreur lors de la suppression du captcha de la BDD:', error);
             }
             
-            const totalAttempts = (failedAttempts.get(message.author.id) || 0) + 1;
-            failedAttempts.set(message.author.id, totalAttempts);
-            
-            // Sauvegarder les tentatives échouées dans PostgreSQL
-            try {
-                await pool.query(`
-                    INSERT INTO failed_attempts (user_id, attempts, last_attempt)
-                    VALUES ($1, $2, CURRENT_TIMESTAMP)
-                    ON CONFLICT (user_id)
-                    DO UPDATE SET 
-                        attempts = $2,
-                        last_attempt = CURRENT_TIMESTAMP
-                `, [message.author.id, totalAttempts]);
-                
-                console.log(`💾 Tentatives échouées sauvegardées: ${totalAttempts}/3`);
-            } catch (error) {
-                console.error('❌ Erreur lors de la sauvegarde des tentatives:', error);
-            }
-            
             try {
                 const member = message.guild.members.cache.get(message.author.id);
                 
                 const failEmbed = new EmbedBuilder()
                     .setColor(0xFF0000)
                     .setTitle('❌ Échec du captcha')
-                    .setDescription(`${message.author}, vous avez épuisé vos 3 tentatives.\nVous allez être expulsé du serveur.\n\n${totalAttempts >= 3 ? '**Attention :** Si vous revenez, vous serez banni définitivement.' : `**Tentatives totales :** ${totalAttempts}/3`}`)
+                    .setDescription(`${message.author}, vous avez épuisé vos 3 tentatives.\nVous allez être banni du serveur définitivement.`)
                     .setTimestamp();
 
                 await message.channel.send({ embeds: [failEmbed] });
                 
                 if (member) {
-                    await member.kick('Échec du captcha après 3 tentatives');
-                    console.log(`🚫 ${message.author.tag} expulsé après 3 tentatives ratées (Total: ${totalAttempts}/3)`);
+                    await member.ban({ reason: 'Échec du captcha après 3 tentatives' });
+                    console.log(`🚫 ${message.author.tag} BANNI après 3 tentatives ratées`);
                 }
             } catch (error) {
-                console.error('❌ Erreur lors de l\'expulsion:', error);
+                console.error('❌ Erreur lors du bannissement:', error);
             }
         } else {
             // Nouvelle tentative - Supprimer l'ancien message de captcha
