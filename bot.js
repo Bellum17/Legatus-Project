@@ -586,10 +586,19 @@ client.on(Events.MessageCreate, async (message) => {
                     .setTitle('<:DO_Icone_Cle:1436971786418786395> | Échec du captcha')
                     .setDescription(`> ${message.author} est banni du serveur. L'utilisateur a épuisé ses tentatives.`);
 
-                await message.channel.send({ embeds: [failEmbed] });
+                const failMessage = await message.channel.send({ embeds: [failEmbed] });
                 
                 if (member) {
                     await member.ban({ reason: '[CAPTCHA] - Échec du captcha après 3 tentatives' });
+                    
+                    // Supprimer le message d'échec après 10 secondes
+                    setTimeout(async () => {
+                        try {
+                            await failMessage.delete();
+                        } catch (error) {
+                            console.error('❌ Erreur lors de la suppression du message d\'échec:', error);
+                        }
+                    }, 10000);
                     
                     // Sauvegarder le ban dans la base de données pour le suivi
                     try {
@@ -640,6 +649,15 @@ client.on(Events.MessageCreate, async (message) => {
                 embeds: [retryEmbed],
                 files: [attachment]
             });
+            
+            // Supprimer le message d'erreur après 5 secondes
+            setTimeout(async () => {
+                try {
+                    await newCaptchaMessage.delete();
+                } catch (error) {
+                    console.error('❌ Erreur lors de la suppression du message d\'erreur:', error);
+                }
+            }, 5000);
             
             // Mettre à jour l'ID du nouveau message
             captchaData.messageId = newCaptchaMessage.id;
