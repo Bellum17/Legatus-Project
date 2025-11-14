@@ -2,11 +2,11 @@
 require('dotenv').config();
 
 // Import de Discord.js et axios pour les requêtes HTTP
-const { Client, GatewayIntentBits, Events, SlashCommandBuilder, REST, Routes, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ContainerBuilder, MediaGalleryBuilder, MediaGalleryItemBuilder, TextDisplayBuilder, SeparatorBuilder, MessageFlags, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Events, SlashCommandBuilder, REST, Routes, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ContainerBuilder, MediaGalleryBuilder, MediaGalleryItemBuilder, TextDisplayBuilder, SeparatorBuilder, MessageFlags, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ChannelType, AttachmentBuilder } = require('discord.js');
 const axios = require('axios');
 const express = require('express');
-const DatabaseManager = require('./database');
-const StatsGenerator = require('./stats');
+const { createCanvas, registerFont } = require('canvas');
+const { Pool } = require('pg');
 
 // Configuration du serveur Express pour Railway
 const app = express();
@@ -32,649 +32,635 @@ app.listen(PORT, () => {
     console.log(`🌐 Serveur web démarré sur le port ${PORT}`);
 });
 
+// Configuration PostgreSQL
+// Railway fournit soit DATABASE_URL, soit des variables séparées
+const pool = new Pool(
+    process.env.DATABASE_URL
+        ? {
+              connectionString: process.env.DATABASE_URL,
+              ssl: { rejectUnauthorized: false }
+          }
+        : {
+              host: process.env.PGHOST,
+              port: process.env.PGPORT || 5432,
+              database: process.env.PGDATABASE,
+              user: process.env.PGUSER,
+              password: process.env.PGPASSWORD,
+              ssl: { rejectUnauthorized: false }
+          }
+);
+
+// Fonction pour initialiser la base de données
+async function initDatabase() {
+    // Vérifier si PostgreSQL est configuré
+    if (!process.env.DATABASE_URL && !process.env.PGHOST) {
+        console.warn('⚠️ PostgreSQL non configuré - Les données ne seront pas persistées');
+        return false;
+    }
+
+    try {
+        // Test de connexion
+        await pool.query('SELECT NOW()');
+        console.log('🔌 Connexion PostgreSQL établie');
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS captcha_config (
+                guild_id VARCHAR(20) PRIMARY KEY,
+                channel_id VARCHAR(20) NOT NULL,
+                captcha_role_id VARCHAR(20) NOT NULL,
+                verified_role_id VARCHAR(20) NOT NULL,
+                enabled BOOLEAN DEFAULT true,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS failed_attempts (
+                user_id VARCHAR(20) PRIMARY KEY,
+                attempts INTEGER DEFAULT 0,
+                last_attempt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS active_captchas (
+                user_id VARCHAR(20) PRIMARY KEY,
+                guild_id VARCHAR(20) NOT NULL,
+                captcha_text VARCHAR(10) NOT NULL,
+                attempts INTEGER DEFAULT 0,
+                message_id VARCHAR(20),
+                channel_id VARCHAR(20),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        
+        console.log('✅ Base de données PostgreSQL initialisée');
+        return true;
+    } catch (error) {
+        console.error('❌ Erreur lors de l\'initialisation de la base de données:', error.message);
+        console.warn('⚠️ Le bot fonctionnera sans persistance des données');
+        return false;
+    }
+}
+
+// Stockage temporaire en cache (pour performance)
+const captchaConfig = new Map();
+const failedAttempts = new Map();
+const activeCaptchas = new Map();
+
 // Création du client Discord avec les intentions de base
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildWebhooks
-    ],
-    rest: {
-        timeout: 30000, // Augmenter le timeout à 30 secondes
-        retries: 5 // Réessayer 5 fois en cas d'échec
-    }
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildModeration // Pour détecter les bans/débans
+    ]
 });
 
-// Initialiser la base de données
-const db = new DatabaseManager();
+// Fonction pour générer un captcha
+function generateCaptcha() {
+    const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let text = '';
+    for (let i = 0; i < 6; i++) {
+        text += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
+    return text;
+}
 
-// Initialiser le générateur de statistiques
-const statsGen = new StatsGenerator();
+// Fonction pour créer l'image du captcha
+function createCaptchaImage(text) {
+    const canvas = createCanvas(400, 150);
+    const ctx = canvas.getContext('2d');
 
-// Cache des webhooks par channel
-const webhookCache = new Map();
+    // Fond gris
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, 400, 150);
+
+    // Ajouter du bruit de fond
+    for (let i = 0; i < 150; i++) {
+        ctx.fillStyle = `rgba(${Math.random() * 100 + 100}, ${Math.random() * 100 + 100}, ${Math.random() * 100 + 100}, 0.3)`;
+        ctx.fillRect(Math.random() * 400, Math.random() * 150, 3, 3);
+    }
+
+    // Configuration du texte - Utiliser plusieurs polices en fallback
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    // Dessiner chaque caractère avec rotation et position aléatoire
+    const spacing = 60;
+    const startX = 70;
+    
+    for (let i = 0; i < text.length; i++) {
+        ctx.save();
+        
+        // Position avec variation aléatoire
+        const x = startX + (i * spacing);
+        const y = 75 + (Math.random() - 0.5) * 15;
+        
+        // Rotation aléatoire
+        ctx.translate(x, y);
+        ctx.rotate((Math.random() - 0.5) * 0.3);
+        
+        // Taille de police variable avec plusieurs polices en fallback
+        const fontSize = 55 + Math.random() * 10;
+        // Essayer plusieurs polices courantes qui devraient être disponibles
+        ctx.font = `bold ${fontSize}px "DejaVu Sans", "Arial", "Helvetica", "sans-serif"`;
+        
+        // Dessiner le caractère avec contour pour plus de visibilité
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1;
+        ctx.strokeText(text[i], 0, 0);
+        ctx.fillText(text[i], 0, 0);
+        
+        ctx.restore();
+    }
+
+    // Ajouter des lignes de bruit
+    for (let i = 0; i < 6; i++) {
+        ctx.strokeStyle = `rgba(255, 255, 255, ${Math.random() * 0.4 + 0.1})`;
+        ctx.lineWidth = 2 + Math.random() * 2;
+        ctx.beginPath();
+        ctx.moveTo(Math.random() * 400, Math.random() * 150);
+        ctx.bezierCurveTo(
+            Math.random() * 400, Math.random() * 150,
+            Math.random() * 400, Math.random() * 150,
+            Math.random() * 400, Math.random() * 150
+        );
+        ctx.stroke();
+    }
+
+    return canvas.toBuffer();
+}
 
 // Événement déclenché quand le bot est prêt
 client.once(Events.ClientReady, async (readyClient) => {
     console.log(`✅ Bot connecté en tant que ${readyClient.user.tag}`);
     console.log(`🤖 Bot actif sur ${readyClient.guilds.cache.size} serveur(s)`);
     
+    // Définir le statut du bot
+    client.user.setActivity('les logs du serveur \u{1F6E1}\uFE0F', { type: 3 }); // 3 = WATCHING (emoji bouclier)
+    console.log('\u{1F6E1}\uFE0F Statut défini : "Regarde les logs du serveur"');
+
     // Initialiser la base de données
+    await initDatabase();
+    
+    // Charger les configurations depuis la base de données
     try {
-        await db.init();
+        const result = await pool.query('SELECT * FROM captcha_config WHERE enabled = true');
+        for (const row of result.rows) {
+            captchaConfig.set(row.guild_id, {
+                channelId: row.channel_id,
+                captchaRoleId: row.captcha_role_id,
+                verifiedRoleId: row.verified_role_id,
+                enabled: row.enabled
+            });
+        }
+        console.log(`📊 ${result.rows.length} configuration(s) de captcha chargée(s)`);
     } catch (error) {
-        console.error('❌ Impossible d\'initialiser la base de données:', error);
-        process.exit(1);
+        console.error('❌ Erreur lors du chargement des configurations:', error);
     }
 
     // Enregistrer les commandes slash
-    await registerCommands(readyClient);
-    
-    // Définir le statut du bot
-    client.user.setActivity('les écrits des joueurs 📖', { type: 3 }); // 3 = WATCHING
-    console.log('📖 Statut défini : "Regarde les écrits des joueurs"');
-});
-
-// Fonction pour enregistrer les commandes slash
-async function registerCommands(client) {
     const commands = [
         new SlashCommandBuilder()
-            .setName('personnage')
-            .setDescription('Gestion des personnages')
+            .setName('captcha')
+            .setDescription('Gérer le système de captcha')
             .addSubcommand(subcommand =>
                 subcommand
-                    .setName('créer')
-                    .setDescription('Créer un nouveau personnage')
-            )
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('liste')
-                    .setDescription('Afficher vos personnages')
-            )
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('supprimer')
-                    .setDescription('Supprimer un personnage')
-                    .addStringOption(option =>
+                    .setName('activer')
+                    .setDescription('Activer le système de captcha')
+                    .addChannelOption(option =>
                         option
-                            .setName('nom')
-                            .setDescription('Nom du personnage à supprimer')
+                            .setName('salon')
+                            .setDescription('Le salon où envoyer le captcha')
                             .setRequired(true)
-                    )
-            )
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('info')
-                    .setDescription('Afficher les informations d\'un personnage')
-                    .addStringOption(option =>
+                            .addChannelTypes(ChannelType.GuildText))
+                    .addRoleOption(option =>
                         option
-                            .setName('nom')
-                            .setDescription('Nom du personnage')
-                            .setRequired(true)
-                    )
-            ),
-        new SlashCommandBuilder()
-            .setName('statistiques')
-            .setDescription('Afficher les statistiques')
+                            .setName('role_captcha')
+                            .setDescription('Le rôle de captcha (donné aux nouveaux membres)')
+                            .setRequired(true))
+                    .addRoleOption(option =>
+                        option
+                            .setName('role_vérifié')
+                            .setDescription('Le rôle à donner après validation du captcha')
+                            .setRequired(true)))
             .addSubcommand(subcommand =>
                 subcommand
-                    .setName('messages')
-                    .setDescription('Statistiques des messages du serveur')
-            )
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('utilisateur')
-                    .setDescription('Statistiques de vos messages')
-            )
-    ];
+                    .setName('désactiver')
+                    .setDescription('Désactiver le système de captcha'))
+            .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    ].map(command => command.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
     try {
         console.log('🔄 Enregistrement des commandes slash...');
         await rest.put(
-            Routes.applicationCommands(client.user.id),
+            Routes.applicationCommands(readyClient.user.id),
             { body: commands }
         );
         console.log('✅ Commandes slash enregistrées avec succès');
     } catch (error) {
         console.error('❌ Erreur lors de l\'enregistrement des commandes:', error);
     }
-}
+});
 
-// Gestion des commandes slash et interactions
+// Gestion des interactions (commandes slash)
 client.on(Events.InteractionCreate, async (interaction) => {
-    if (interaction.isChatInputCommand()) {
-        await handleCommand(interaction);
-    } else if (interaction.isModalSubmit()) {
-        await handleModalSubmit(interaction);
-    } else if (interaction.isStringSelectMenu()) {
-        await handleSelectMenu(interaction);
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === 'captcha') {
+        const subcommand = interaction.options.getSubcommand();
+
+        if (subcommand === 'activer') {
+            const channel = interaction.options.getChannel('salon');
+            const captchaRole = interaction.options.getRole('role_captcha');
+            const verifiedRole = interaction.options.getRole('role_vérifié');
+
+            // Sauvegarder dans PostgreSQL
+            try {
+                await pool.query(`
+                    INSERT INTO captcha_config (guild_id, channel_id, captcha_role_id, verified_role_id, enabled)
+                    VALUES ($1, $2, $3, $4, true)
+                    ON CONFLICT (guild_id)
+                    DO UPDATE SET 
+                        channel_id = $2,
+                        captcha_role_id = $3,
+                        verified_role_id = $4,
+                        enabled = true
+                `, [interaction.guildId, channel.id, captchaRole.id, verifiedRole.id]);
+                
+                console.log('💾 Configuration sauvegardée dans PostgreSQL');
+            } catch (error) {
+                console.error('❌ Erreur lors de la sauvegarde dans PostgreSQL:', error);
+            }
+
+            // Mettre à jour le cache
+            captchaConfig.set(interaction.guildId, {
+                channelId: channel.id,
+                captchaRoleId: captchaRole.id,
+                verifiedRoleId: verifiedRole.id,
+                enabled: true
+            });
+
+            await interaction.reply({
+                embeds: [new EmbedBuilder()
+                    .setColor('#af6b6b')
+                    .setTitle('<:DO_Icone_Valide:1436967853801869322> | Captcha activé')
+                    .setDescription(`Le système de captcha a été activé !\n\n**Salon :** ${channel}\n**Rôle captcha :** ${captchaRole}\n**Rôle vérifié :** ${verifiedRole}`)
+                    .setTimestamp()],
+                ephemeral: true
+            });
+
+            console.log(`🛡️ Captcha activé sur ${interaction.guild.name} - Salon: ${channel.name} - Rôle captcha: ${captchaRole.name} - Rôle vérifié: ${verifiedRole.name}`);
+
+        } else if (subcommand === 'désactiver') {
+            // Désactiver dans PostgreSQL
+            try {
+                await pool.query(`
+                    UPDATE captcha_config
+                    SET enabled = false
+                    WHERE guild_id = $1
+                `, [interaction.guildId]);
+                
+                console.log('💾 Configuration désactivée dans PostgreSQL');
+            } catch (error) {
+                console.error('❌ Erreur lors de la désactivation dans PostgreSQL:', error);
+            }
+
+            // Supprimer du cache
+            captchaConfig.delete(interaction.guildId);
+
+            await interaction.reply({
+                embeds: [new EmbedBuilder()
+                    .setColor('#af6b6b')
+                    .setTitle('<:DO_Icone_Cle:1436971786418786395> | Captcha désactivé')
+                    .setDescription('Le système de captcha a été désactivé.')
+                    .setTimestamp()],
+                ephemeral: true
+            });
+
+            console.log(`🛡️ Captcha désactivé sur ${interaction.guild.name}`);
+        }
     }
 });
 
-// Gestionnaire de commandes
-async function handleCommand(interaction) {
+// Gestion des nouveaux membres
+client.on(Events.GuildMemberAdd, async (member) => {
+    const config = captchaConfig.get(member.guild.id);
+    if (!config || !config.enabled) return;
+
+    const userId = member.user.id;
+    const channel = member.guild.channels.cache.get(config.channelId);
+    if (!channel) return;
+
+    // Attribuer le rôle de captcha au membre
     try {
-        if (interaction.commandName === 'personnage') {
-            const subcommand = interaction.options.getSubcommand();
-            
-            switch (subcommand) {
-                case 'créer':
-                    await showCreateCharacterModal(interaction);
-                    break;
-                case 'liste':
-                    await showCharacterList(interaction);
-                    break;
-                case 'supprimer':
-                    await deleteCharacter(interaction);
-                    break;
-                case 'info':
-                    await showCharacterInfo(interaction);
-                    break;
-            }
-        } else if (interaction.commandName === 'statistiques') {
-            const subcommand = interaction.options.getSubcommand();
-            
-            switch (subcommand) {
-                case 'messages':
-                    await showServerStats(interaction);
-                    break;
-                case 'utilisateur':
-                    await showUserStats(interaction);
-                    break;
-            }
+        const captchaRole = member.guild.roles.cache.get(config.captchaRoleId);
+        if (captchaRole) {
+            await member.roles.add(captchaRole);
+            console.log(`🔐 Rôle de captcha attribué à ${member.user.tag}`);
         }
     } catch (error) {
-        console.error('❌ Erreur lors de l\'exécution de la commande:', error);
-        const errorMessage = error.message || 'Une erreur est survenue';
-        
-        if (interaction.replied || interaction.deferred) {
-            await interaction.followUp({ content: `<:DO_Cross:1436967855273803826> ${errorMessage}`, flags: MessageFlags.Ephemeral });
-        } else {
-            await interaction.reply({ content: `<:DO_Cross:1436967855273803826> ${errorMessage}`, flags: MessageFlags.Ephemeral });
-        }
-    }
-}
-
-// Afficher le modal de création de personnage
-async function showCreateCharacterModal(interaction) {
-    const modal = new ModalBuilder()
-        .setCustomId('create_character_modal')
-        .setTitle('Créer un personnage');
-
-    const nameInput = new TextInputBuilder()
-        .setCustomId('character_name')
-        .setLabel('Nom du personnage')
-        .setPlaceholder('Ex: Alice')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(100);
-
-    const prefixInput = new TextInputBuilder()
-        .setCustomId('character_prefix')
-        .setLabel('Prefix (pour déclencher le personnage)')
-        .setPlaceholder('Ex: [Alice] ou a:')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(50);
-
-    const avatarInput = new TextInputBuilder()
-        .setCustomId('character_avatar')
-        .setLabel('URL de l\'avatar (optionnel)')
-        .setPlaceholder('https://example.com/avatar.png')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false);
-
-    const row1 = new ActionRowBuilder().addComponents(nameInput);
-    const row2 = new ActionRowBuilder().addComponents(prefixInput);
-    const row3 = new ActionRowBuilder().addComponents(avatarInput);
-
-    modal.addComponents(row1, row2, row3);
-
-    await interaction.showModal(modal);
-}
-
-// Gérer la soumission du modal
-async function handleModalSubmit(interaction) {
-    if (interaction.customId === 'create_character_modal') {
-        await createCharacterFromModal(interaction);
-    }
-}
-
-// Créer un personnage à partir du modal
-async function createCharacterFromModal(interaction) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-    const name = interaction.fields.getTextInputValue('character_name');
-    const prefix = interaction.fields.getTextInputValue('character_prefix');
-    const avatarUrl = interaction.fields.getTextInputValue('character_avatar') || null;
-
-    // Validation de l'URL si fournie
-    if (avatarUrl && !isValidUrl(avatarUrl)) {
-        await interaction.editReply({
-            content: '<:DO_Cross:1436967855273803826> L\'URL de l\'avatar n\'est pas valide. Elle doit commencer par http:// ou https://'
-        });
-        return;
+        console.error('❌ Erreur lors de l\'attribution du rôle de captcha:', error);
     }
 
-    try {
-        const character = await db.createCharacter(
-            interaction.user.id,
-            interaction.guildId,
-            name,
-            prefix,
-            avatarUrl
-        );
-
-        const embed = new EmbedBuilder()
-            .setColor(0x729bb6)
-            .setTitle('<:DO_Check:1436967853801869322> Personnage créé !')
-            .setDescription(`Le personnage **${name}** a été créé avec succès.\n\n> <:DO_Icone_Cle:1436971786418786395> | **Préfix** : \`${prefix}\`\n> <:DO_Icone_FicheModifier:1436970642531680306> | **Nom** : ${name}`);
-
-        if (avatarUrl) {
-            embed.setThumbnail(avatarUrl);
-        }
-
-        await interaction.editReply({ embeds: [embed] });
-    } catch (error) {
-        await interaction.editReply({
-            content: `<:DO_Cross:1436967855273803826> ${error.message}`
-        });
-    }
-}
-
-// Afficher la liste des personnages
-async function showCharacterList(interaction) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-    const characters = await db.getUserCharacters(interaction.user.id, interaction.guildId);
-
-    if (characters.length === 0) {
-        await interaction.editReply({
-            content: '<:DO_Cross:1436967855273803826> Vous n\'avez aucun personnage. Utilisez `/personnage créer` pour en créer un !'
-        });
-        return;
-    }
-
-    let description = '';
+    // Générer le captcha
+    const captchaText = generateCaptcha();
+    const captchaImage = createCaptchaImage(captchaText);
     
-    characters.forEach(char => {
-        description += `**${char.name}**\n`;
-        description += `> <:DO_Icone_Cle:1436971786418786395> | **Préfix** : \`${char.prefix}\`\n`;
-        description += `> <:DO_Icone_FicheModifier:1436970642531680306> | **Nom** : ${char.name}\n\n`;
+    // Stocker le captcha dans le cache
+    activeCaptchas.set(userId, {
+        text: captchaText,
+        guildId: member.guild.id,
+        attempts: 0,
+        messageId: null,
+        channelId: null
     });
 
-    const embed = new EmbedBuilder()
-        .setColor(0x729bb6)
-        .setTitle('<:DO_Icone_Liste:1436970080822099998> | Liste de vos personnages')
-        .setDescription(description)
-        .setFooter({ text: `Vous avez ${characters.length} personnage(s)` });
-
-    await interaction.editReply({ embeds: [embed] });
-}
-
-// Supprimer un personnage
-async function deleteCharacter(interaction) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-    const name = interaction.options.getString('nom');
-    const deleted = await db.deleteCharacter(interaction.user.id, interaction.guildId, name);
-
-    if (!deleted) {
-        await interaction.editReply({
-            content: `<:DO_Cross:1436967855273803826> Aucun personnage nommé "${name}" n'a été trouvé.`
-        });
-        return;
-    }
-
-    await interaction.editReply({
-        content: `<:DO_Check:1436967853801869322> Le personnage **${name}** a été supprimé avec succès.`
-    });
-}
-
-// Afficher les informations d'un personnage
-async function showCharacterInfo(interaction) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-    const name = interaction.options.getString('nom');
-    const character = await db.getCharacterByName(interaction.user.id, interaction.guildId, name);
-
-    if (!character) {
-        await interaction.editReply({
-            content: `<:DO_Cross:1436967855273803826> Aucun personnage nommé "${name}" n'a été trouvé.`
-        });
-        return;
-    }
-
-    const description = `> <:DO_Icone_Cle:1436971786418786395> | **Préfix** : \`${character.prefix}\`\n> <:DO_Icone_FicheModifier:1436970642531680306> | **Nom** : ${character.name}\n> <:DO_Icone_Calendrier:1437018266966032466> | **Créé le** : ${new Date(character.created_at).toLocaleDateString('fr-FR')}\n> <:DO_Icone_Modification:1437017821031960656> | **Modifié le** : ${new Date(character.updated_at).toLocaleDateString('fr-FR')}`;
-
-    const embed = new EmbedBuilder()
-        .setColor(0x729bb6)
-        .setTitle(`<:DO_Icone_Fiche:1436970640878993428> | ${character.name}`)
-        .setDescription(description);
-
-    if (character.avatar_url) {
-        embed.setThumbnail(character.avatar_url);
-    }
-
-    await interaction.editReply({ embeds: [embed] });
-}
-
-// Fonction utilitaire pour valider une URL
-function isValidUrl(string) {
     try {
-        const url = new URL(string);
-        return url.protocol === 'http:' || url.protocol === 'https:';
-    } catch (_) {
-        return false;
-    }
-}
-
-// Afficher les statistiques du serveur
-async function showServerStats(interaction) {
-    await interaction.deferReply();
-
-    try {
-        const hours = 24; // 24 dernières heures
-        const channelId = null; // Pas de filtre par channel
-
-        // Récupérer les données statistiques par heure
-        const stats = await db.getMessageStatsByHour(interaction.guildId, hours, channelId);
-
-        // Vérifier qu'il y a des données
-        if (stats.length === 0) {
-            await interaction.editReply({
-                content: '<:DO_Cross:1436967855273803826> Aucune donnée disponible pour cette période. Le système de tracking est nouveau, les statistiques s\'accumuleront au fil du temps !'
-            });
-            return;
-        }
-
-        // Générer le graphique principal
-        const chartBuffer = await statsGen.generateActivityChart(stats);
-        const attachment = new AttachmentBuilder(chartBuffer, { name: 'stats.png' });
-
-        // Créer le menu déroulant pour changer de période
-        const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId('stats_period')
-            .setPlaceholder('Choisir une période')
-            .addOptions([
-                {
-                    label: '7 Jours',
-                    value: 'period_7d'
-                },
-                {
-                    label: '14 Jours',
-                    value: 'period_14d'
-                },
-                {
-                    label: '1 Mois',
-                    value: 'period_1m'
-                },
-                {
-                    label: '6 Mois',
-                    value: 'period_6m'
-                },
-                {
-                    label: '1 An',
-                    value: 'period_1y'
-                }
-            ]);
-
-        const row = new ActionRowBuilder()
-            .addComponents(selectMenu);
-
-        // Envoyer l'image avec le menu déroulant
-        await interaction.editReply({
-            files: [attachment],
-            components: [row]
-        });
-
-    } catch (error) {
-        console.error('❌ Erreur lors de la génération des statistiques:', error);
-        await interaction.editReply({
-            content: `<:DO_Cross:1436967855273803826> Erreur lors de la génération des statistiques: ${error.message}`
-        });
-    }
-}
-
-// Afficher les statistiques de l'utilisateur
-async function showUserStats(interaction) {
-    await interaction.deferReply();
-
-    try {
-        const hours = 24; // 24 dernières heures par défaut
-        const userId = interaction.user.id;
-        const username = interaction.user.username;
+        const attachment = new AttachmentBuilder(captchaImage, { name: 'captcha.png' });
         
-        // Récupérer l'URL de l'avatar de l'utilisateur
-        const avatarUrl = interaction.user.displayAvatarURL({ extension: 'png', size: 128 });
+        const embed = new EmbedBuilder()
+            .setColor('#af6b6b')
+            .setTitle('<:DO_Icone_Cle:1436971786418786395> | Captcha du serveur')
+            .setDescription(`> Merci de remplir le Captcha ci-joint, pour ce faire, voici les conditions :\n> <:DO_Icone_Cle:1436971786418786395> | Tapez le captcha en majuscules uniquement.\n> <:DO_Icone_Valide:1436967853801869322> | Une fois tapé, vous obtiendrez le rôle <@&1438937587141185711> et vous pourrez accéder au reste du serveur.`)
+            .setImage('attachment://captcha.png')
+            .setFooter({ text: 'Tentative 1/3 avant bannissement' })
+            .setTimestamp();
 
-        // Récupérer les données statistiques par heure
-        const stats = await db.getUserMessageStatsByHour(interaction.guildId, userId, hours);
+        const captchaMessage = await channel.send({
+            content: `${member}`,
+            embeds: [embed],
+            files: [attachment]
+        });
 
-        // Vérifier qu'il y a des données
-        if (stats.length === 0) {
-            await interaction.editReply({
-                content: '<:DO_Cross:1436967855273803826> Aucune donnée disponible pour cette période. Le système de tracking est nouveau, les statistiques s\'accumuleront au fil du temps !'
-            });
-            return;
+        // Mettre à jour le captcha avec les IDs
+        const captchaData = activeCaptchas.get(userId);
+        captchaData.messageId = captchaMessage.id;
+        captchaData.channelId = channel.id;
+
+        // Sauvegarder le captcha actif dans PostgreSQL
+        try {
+            await pool.query(`
+                INSERT INTO active_captchas (user_id, guild_id, captcha_text, attempts, message_id, channel_id)
+                VALUES ($1, $2, $3, 0, $4, $5)
+                ON CONFLICT (user_id)
+                DO UPDATE SET 
+                    guild_id = $2,
+                    captcha_text = $3,
+                    attempts = 0,
+                    message_id = $4,
+                    channel_id = $5,
+                    created_at = CURRENT_TIMESTAMP
+            `, [userId, member.guild.id, captchaText, captchaMessage.id, channel.id]);
+        } catch (error) {
+            console.error('❌ Erreur lors de la sauvegarde du captcha:', error);
         }
 
-        // Générer le graphique utilisateur avec photo de profil
-        const chartBuffer = await statsGen.generateUserActivityChart(stats, avatarUrl, username);
-        const attachment = new AttachmentBuilder(chartBuffer, { name: 'stats.png' });
-
-        // Créer le menu déroulant pour changer de période
-        const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId('user_stats_period')
-            .setPlaceholder('Choisir une période')
-            .addOptions([
-                {
-                    label: '7 Jours',
-                    value: 'period_7d'
-                },
-                {
-                    label: '14 Jours',
-                    value: 'period_14d'
-                },
-                {
-                    label: '1 Mois',
-                    value: 'period_1m'
-                },
-                {
-                    label: '6 Mois',
-                    value: 'period_6m'
-                },
-                {
-                    label: '1 An',
-                    value: 'period_1y'
-                }
-            ]);
-
-        const row = new ActionRowBuilder()
-            .addComponents(selectMenu);
-
-        // Envoyer l'image avec le menu déroulant
-        await interaction.editReply({
-            files: [attachment],
-            components: [row]
-        });
+        console.log(`🛡️ Captcha envoyé à ${member.user.tag} sur ${member.guild.name}`);
 
     } catch (error) {
-        console.error('❌ Erreur lors de la génération des statistiques utilisateur:', error);
-        await interaction.editReply({
-            content: `<:DO_Cross:1436967855273803826> Erreur lors de la génération des statistiques: ${error.message}`
-        });
+        console.error('❌ Erreur lors de l\'envoi du captcha:', error);
     }
-}
+});
 
-// Gestionnaire de menu déroulant
-async function handleSelectMenu(interaction) {
-    if (interaction.customId === 'stats_period') {
-        await interaction.deferUpdate();
-
+// Gestion des membres qui quittent
+client.on(Events.GuildMemberRemove, async (member) => {
+    const userId = member.user.id;
+    const captchaData = activeCaptchas.get(userId);
+    
+    if (captchaData) {
+        // Supprimer le message de captcha
         try {
-            const period = interaction.values[0];
-            let days;
-
-            // Déterminer le nombre de jours selon la période
-            switch (period) {
-                case 'period_7d':
-                    days = 7;
-                    break;
-                case 'period_14d':
-                    days = 14;
-                    break;
-                case 'period_1m':
-                    days = 30;
-                    break;
-                case 'period_6m':
-                    days = 180;
-                    break;
-                case 'period_1y':
-                    days = 365;
-                    break;
-                default:
-                    days = 30;
+            const channel = member.guild.channels.cache.get(captchaData.channelId);
+            if (channel && captchaData.messageId) {
+                const message = await channel.messages.fetch(captchaData.messageId);
+                if (message) {
+                    await message.delete();
+                    console.log(`🗑️ Message de captcha supprimé pour ${member.user.tag}`);
+                }
             }
-
-            // Récupérer les nouvelles données (par jour pour les périodes > 24h)
-            const stats = await db.getMessageStatsByDay(interaction.guildId, days, null);
-
-            // Générer le graphique même si toutes les valeurs sont à 0
-            // (la requête SQL remplit automatiquement les jours manquants)
-            const chartBuffer = await statsGen.generateActivityChart(stats);
-            const attachment = new AttachmentBuilder(chartBuffer, { name: 'stats.png' });
-
-            // Recréer le menu déroulant
-            const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId('stats_period')
-                .setPlaceholder('Choisir une période')
-                .addOptions([
-                    {
-                        label: '7 Jours',
-                        value: 'period_7d'
-                    },
-                    {
-                        label: '14 Jours',
-                        value: 'period_14d'
-                    },
-                    {
-                        label: '1 Mois',
-                        value: 'period_1m'
-                    },
-                    {
-                        label: '6 Mois',
-                        value: 'period_6m'
-                    },
-                    {
-                        label: '1 An',
-                        value: 'period_1y'
-                    }
-                ]);
-
-            const row = new ActionRowBuilder()
-                .addComponents(selectMenu);
-
-            // Mettre à jour le message avec le nouveau graphique
-            await interaction.editReply({
-                files: [attachment],
-                components: [row]
-            });
-
         } catch (error) {
-            console.error('❌ Erreur lors du changement de période:', error);
-            await interaction.editReply({
-                content: `<:DO_Cross:1436967855273803826> Erreur: ${error.message}`,
-                components: []
-            });
+            console.error('❌ Erreur lors de la suppression du message de captcha:', error);
         }
-    } else if (interaction.customId === 'user_stats_period') {
-        await interaction.deferUpdate();
-
+        
+        // Retirer le captcha actif
+        activeCaptchas.delete(userId);
+        
+        // Supprimer aussi de la base de données
         try {
-            const period = interaction.values[0];
-            let days;
-
-            // Déterminer le nombre de jours selon la période
-            switch (period) {
-                case 'period_7d':
-                    days = 7;
-                    break;
-                case 'period_14d':
-                    days = 14;
-                    break;
-                case 'period_1m':
-                    days = 30;
-                    break;
-                case 'period_6m':
-                    days = 180;
-                    break;
-                case 'period_1y':
-                    days = 365;
-                    break;
-                default:
-                    days = 30;
-            }
-
-            const userId = interaction.user.id;
-            const username = interaction.user.username;
-            const avatarUrl = interaction.user.displayAvatarURL({ extension: 'png', size: 128 });
-
-            // Récupérer les nouvelles données (par jour pour les périodes > 24h)
-            const stats = await db.getUserMessageStatsByDay(interaction.guildId, userId, days);
-
-            // Générer le graphique utilisateur
-            const chartBuffer = await statsGen.generateUserActivityChart(stats, avatarUrl, username);
-            const attachment = new AttachmentBuilder(chartBuffer, { name: 'stats.png' });
-
-            // Recréer le menu déroulant
-            const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId('user_stats_period')
-                .setPlaceholder('Choisir une période')
-                .addOptions([
-                    {
-                        label: '7 Jours',
-                        value: 'period_7d'
-                    },
-                    {
-                        label: '14 Jours',
-                        value: 'period_14d'
-                    },
-                    {
-                        label: '1 Mois',
-                        value: 'period_1m'
-                    },
-                    {
-                        label: '6 Mois',
-                        value: 'period_6m'
-                    },
-                    {
-                        label: '1 An',
-                        value: 'period_1y'
-                    }
-                ]);
-
-            const row = new ActionRowBuilder()
-                .addComponents(selectMenu);
-
-            // Mettre à jour le message avec le nouveau graphique
-            await interaction.editReply({
-                files: [attachment],
-                components: [row]
-            });
-
+            await pool.query('DELETE FROM active_captchas WHERE user_id = $1', [userId]);
         } catch (error) {
-            console.error('❌ Erreur lors du changement de période:', error);
-            await interaction.editReply({
-                content: `<:DO_Cross:1436967855273803826> Erreur: ${error.message}`,
-                components: []
+            console.error('❌ Erreur lors de la suppression du captcha de la BDD:', error);
+        }
+        
+        console.log(`🚪 ${member.user.tag} a quitté le serveur, captcha nettoyé`);
+    }
+});
+
+// Gestion des débans (unban)
+client.on(Events.GuildBanRemove, async (ban) => {
+    const userId = ban.user.id;
+    
+    // Vérifier si c'était un ban pour captcha et reset les tentatives
+    try {
+        const result = await pool.query('SELECT attempts FROM failed_attempts WHERE user_id = $1', [userId]);
+        
+        if (result.rows.length > 0) {
+            // Supprimer les tentatives pour permettre une nouvelle chance
+            await pool.query('DELETE FROM failed_attempts WHERE user_id = $1', [userId]);
+            
+            // Supprimer du cache aussi
+            failedAttempts.delete(userId);
+            
+            console.log(`♻️ ${ban.user.tag} a été débanni - Tentatives de captcha réinitialisées`);
+        }
+    } catch (error) {
+        console.error('❌ Erreur lors de la réinitialisation des tentatives:', error);
+    }
+});
+
+// Gestion des messages pour le captcha
+client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot) return;
+    
+    const captchaData = activeCaptchas.get(message.author.id);
+    if (!captchaData) return;
+
+    const config = captchaConfig.get(captchaData.guildId);
+    if (!config || message.channel.id !== config.channelId) return;
+
+    const userAnswer = message.content.toUpperCase().trim();
+    
+    try {
+        await message.delete();
+    } catch (error) {
+        console.error('❌ Erreur lors de la suppression du message:', error);
+    }
+
+    if (userAnswer === captchaData.text) {
+        // Bonne réponse - Supprimer le message de captcha original
+        try {
+            if (captchaData.messageId) {
+                const captchaMessage = await message.channel.messages.fetch(captchaData.messageId);
+                if (captchaMessage) {
+                    await captchaMessage.delete();
+                }
+            }
+        } catch (error) {
+            console.error('❌ Erreur lors de la suppression du message de captcha:', error);
+        }
+        
+        // Supprimer du cache et de la base de données
+        activeCaptchas.delete(message.author.id);
+        
+        try {
+            await pool.query('DELETE FROM active_captchas WHERE user_id = $1', [message.author.id]);
+        } catch (error) {
+            console.error('❌ Erreur lors de la suppression du captcha de la BDD:', error);
+        }
+        
+        try {
+            const member = message.guild.members.cache.get(message.author.id);
+            const captchaRole = message.guild.roles.cache.get(config.captchaRoleId);
+            const verifiedRole = message.guild.roles.cache.get(config.verifiedRoleId);
+            
+            if (member) {
+                // Retirer le rôle de captcha
+                if (captchaRole) {
+                    await member.roles.remove(captchaRole);
+                }
+                
+                // Ajouter le rôle vérifié
+                if (verifiedRole) {
+                    await member.roles.add(verifiedRole);
+                }
+                
+                const successEmbed = new EmbedBuilder()
+                    .setColor('#af6b6b')
+                    .setTitle('<:DO_Icone_Valide:1436967853801869322> | Captcha validé !')
+                    .setDescription(`${message.author}, vous avez été vérifié avec succès !\nVous avez maintenant accès au serveur.`)
+                    .setTimestamp();
+
+                const successMessage = await message.channel.send({ embeds: [successEmbed] });
+                
+                // Supprimer le message de succès après 10 secondes
+                setTimeout(async () => {
+                    try {
+                        await successMessage.delete();
+                    } catch (err) {
+                        console.error('❌ Erreur lors de la suppression du message de succès:', err);
+                    }
+                }, 10000);
+                
+                console.log(`✅ ${message.author.tag} a réussi le captcha sur ${message.guild.name}`);
+            }
+        } catch (error) {
+            console.error('❌ Erreur lors de l\'attribution des rôles:', error);
+        }
+    } else {
+        // Mauvaise réponse
+        captchaData.attempts++;
+        
+        if (captchaData.attempts >= 3) {
+            // Ban après 3 tentatives
+            activeCaptchas.delete(message.author.id);
+            
+            // Supprimer de la base de données
+            try {
+                await pool.query('DELETE FROM active_captchas WHERE user_id = $1', [message.author.id]);
+            } catch (error) {
+                console.error('❌ Erreur lors de la suppression du captcha de la BDD:', error);
+            }
+            
+            try {
+                const member = message.guild.members.cache.get(message.author.id);
+                
+                const failEmbed = new EmbedBuilder()
+                    .setColor('#af6b6b')
+                    .setTitle('<:DO_Icone_Cle:1436971786418786395> | Échec du captcha')
+                    .setDescription(`${message.author}, vous avez épuisé vos 3 tentatives.\nVous allez être banni du serveur définitivement.`)
+                    .setTimestamp();
+
+                await message.channel.send({ embeds: [failEmbed] });
+                
+                if (member) {
+                    await member.ban({ reason: '[CAPTCHA] - Échec du captcha après 3 tentatives' });
+                    
+                    // Sauvegarder le ban dans la base de données pour le suivi
+                    try {
+                        await pool.query(`
+                            INSERT INTO failed_attempts (user_id, attempts, last_attempt)
+                            VALUES ($1, 3, CURRENT_TIMESTAMP)
+                            ON CONFLICT (user_id)
+                            DO UPDATE SET 
+                                attempts = 3,
+                                last_attempt = CURRENT_TIMESTAMP
+                        `, [message.author.id]);
+                    } catch (dbError) {
+                        console.error('❌ Erreur lors de la sauvegarde du ban:', dbError);
+                    }
+                    
+                    console.log(`🚫 ${message.author.tag} BANNI - Raison: [CAPTCHA] - Échec du captcha`);
+                }
+            } catch (error) {
+                console.error('❌ Erreur lors du bannissement:', error);
+            }
+        } else {
+            // Nouvelle tentative - Supprimer l'ancien message de captcha
+            try {
+                if (captchaData.messageId) {
+                    const oldMessage = await message.channel.messages.fetch(captchaData.messageId);
+                    if (oldMessage) {
+                        await oldMessage.delete();
+                    }
+                }
+            } catch (error) {
+                console.error('❌ Erreur lors de la suppression de l\'ancien captcha:', error);
+            }
+            
+            const captchaText = generateCaptcha();
+            const captchaImage = createCaptchaImage(captchaText);
+            captchaData.text = captchaText;
+            
+            const attachment = new AttachmentBuilder(captchaImage, { name: 'captcha.png' });
+            
+            const retryEmbed = new EmbedBuilder()
+                .setColor('#af6b6b')
+                .setTitle('<:DO_Icone_Cle:1436971786418786395> | Code incorrect')
+                .setDescription(`${message.author}, le code est incorrect.\n\nVeuillez réessayer avec le nouveau captcha ci-dessous.\n\n**Tentatives restantes :** ${3 - captchaData.attempts}`)
+                .setImage('attachment://captcha.png')
+                .setTimestamp();
+
+            const newCaptchaMessage = await message.channel.send({
+                content: `${message.author}`,
+                embeds: [retryEmbed],
+                files: [attachment]
             });
+            
+            // Mettre à jour l'ID du nouveau message
+            captchaData.messageId = newCaptchaMessage.id;
+            
+            // Mettre à jour dans PostgreSQL
+            try {
+                await pool.query(`
+                    UPDATE active_captchas
+                    SET captcha_text = $1, attempts = $2, message_id = $3
+                    WHERE user_id = $4
+                `, [captchaText, captchaData.attempts, newCaptchaMessage.id, message.author.id]);
+            } catch (error) {
+                console.error('❌ Erreur lors de la mise à jour du captcha dans la BDD:', error);
+            }
+            
+            console.log(`⚠️ ${message.author.tag} a raté une tentative (${captchaData.attempts}/3)`);
         }
     }
-}
+});
 
 // Gestion des erreurs
 client.on(Events.Error, (error) => {
@@ -683,194 +669,8 @@ client.on(Events.Error, (error) => {
 
 // Gestion de la déconnexion
 client.on(Events.Disconnect, () => {
-    console.log('⚠️ Bot déconnecté - Reconnexion automatique par Discord.js...');
+    console.log('⚠️ Bot déconnecté');
 });
-
-// Gestion de la reprise de connexion
-client.on(Events.ShardResume, (id, replayedEvents) => {
-    console.log(`✅ Connexion reprise (Shard ${id}, ${replayedEvents} événements rejoués)`);
-});
-
-// Gestion de la reconnexion
-client.on(Events.ShardReconnecting, (id) => {
-    console.log(`🔄 Reconnexion en cours (Shard ${id})...`);
-});
-
-// Gestion des messages pour le proxying
-client.on(Events.MessageCreate, async (message) => {
-    // Ignorer les messages du bot lui-même
-    if (message.author.id === client.user.id) return;
-    
-    // Ignorer les messages vides
-    if (!message.content || message.content.trim().length === 0) return;
-
-    try {
-        // Logger le message pour les statistiques (sauf webhooks)
-        if (!message.webhookId && !message.author.bot) {
-            await db.logMessage(
-                message.author.id,
-                message.guildId,
-                message.channelId,
-                message.id,
-                false,
-                null
-            );
-        }
-
-        // Ignorer les messages des webhooks pour le proxying
-        if (message.webhookId || message.author.bot) return;
-
-        // Chercher un personnage correspondant au prefix
-        const character = await findCharacterByPrefix(message);
-        
-        if (character) {
-            await proxyMessage(message, character);
-        }
-    } catch (error) {
-        console.error('❌ Erreur lors du proxying:', error);
-    }
-});
-
-// Trouver un personnage par son prefix dans le message
-async function findCharacterByPrefix(message) {
-    const content = message.content;
-    
-    // Récupérer tous les personnages de l'utilisateur
-    const characters = await db.getUserCharacters(message.author.id, message.guildId);
-    
-    // Chercher un personnage dont le prefix correspond au début du message
-    for (const character of characters) {
-        if (content.startsWith(character.prefix)) {
-            return character;
-        }
-    }
-    
-    return null;
-}
-
-// Transformer le message via webhook
-async function proxyMessage(message, character) {
-    try {
-        // Retirer le prefix du contenu
-        const content = message.content.substring(character.prefix.length).trim();
-        
-        // Ignorer si le message est vide après avoir retiré le prefix
-        if (!content) return;
-        
-        // Récupérer ou créer un webhook pour ce channel
-        const webhook = await getOrCreateWebhook(message.channel);
-        
-        if (!webhook) {
-            console.error('❌ Impossible de créer un webhook');
-            return;
-        }
-
-        // Vérifier si c'est une réponse à un message
-        let repliedToMessage = null;
-        let mentionUserId = null;
-        
-        if (message.reference) {
-            try {
-                repliedToMessage = await message.channel.messages.fetch(message.reference.messageId);
-                
-                // Si c'est une réponse à un message de webhook (personnage)
-                if (repliedToMessage.webhookId) {
-                    // Chercher le créateur du personnage en parsant le nom du webhook
-                    const characterName = repliedToMessage.author.username;
-                    
-                    // Chercher dans la base de données quel utilisateur a créé ce personnage
-                    const originalCharacter = await db.getCharacterByName(null, message.guildId, characterName);
-                    
-                    if (originalCharacter) {
-                        mentionUserId = originalCharacter.user_id;
-                    }
-                }
-            } catch (error) {
-                console.error('⚠️ Impossible de récupérer le message d\'origine:', error);
-            }
-        }
-
-        // Préparer le contenu avec la mention si nécessaire
-        let finalContent = content;
-        if (repliedToMessage && mentionUserId) {
-            finalContent = `*↩️ <@${mentionUserId}>*\n${content}`;
-        }
-
-        // Envoyer le message via le webhook
-        const webhookMessage = await webhook.send({
-            content: finalContent,
-            username: character.name,
-            avatarURL: character.avatar_url || message.author.displayAvatarURL(),
-            allowedMentions: {
-                parse: ['users', 'roles'],
-                repliedUser: true
-            }
-        });
-
-        // Logger le message de personnage pour les statistiques
-        await db.logMessage(
-            message.author.id,
-            message.guildId,
-            message.channelId,
-            webhookMessage.id,
-            true,
-            character.name
-        );
-
-        // Supprimer le message original
-        await message.delete().catch(err => {
-            console.error('❌ Impossible de supprimer le message:', err);
-        });
-
-    } catch (error) {
-        console.error('❌ Erreur lors du proxying du message:', error);
-    }
-}
-
-// Récupérer ou créer un webhook pour un channel
-async function getOrCreateWebhook(channel) {
-    // Vérifier si on a un webhook en cache
-    if (webhookCache.has(channel.id)) {
-        const webhook = webhookCache.get(channel.id);
-        // Vérifier que le webhook est toujours valide
-        try {
-            await webhook.fetch();
-            return webhook;
-        } catch (error) {
-            // Le webhook n'existe plus, le retirer du cache
-            webhookCache.delete(channel.id);
-        }
-    }
-
-    // Vérifier les permissions
-    if (!channel.permissionsFor(client.user).has(PermissionFlagsBits.ManageWebhooks)) {
-        console.error('❌ Pas de permission pour gérer les webhooks dans ce channel');
-        return null;
-    }
-
-    try {
-        // Chercher un webhook existant créé par le bot
-        const webhooks = await channel.fetchWebhooks();
-        let webhook = webhooks.find(wh => wh.owner.id === client.user.id && wh.name === 'Scriptorium');
-
-        // Créer un nouveau webhook si aucun n'existe
-        if (!webhook) {
-            webhook = await channel.createWebhook({
-                name: 'Scriptorium',
-                reason: 'Webhook pour le système de personnages'
-            });
-            console.log(`✅ Webhook créé pour le channel ${channel.name}`);
-        }
-
-        // Mettre en cache
-        webhookCache.set(channel.id, webhook);
-        return webhook;
-
-    } catch (error) {
-        console.error('❌ Erreur lors de la création du webhook:', error);
-        return null;
-    }
-}
 
 // Gestion des erreurs non capturées
 process.on('unhandledRejection', (reason, promise) => {
@@ -889,36 +689,16 @@ if (!process.env.DISCORD_TOKEN) {
     process.exit(1);
 }
 
-// Fonction pour se connecter avec retry
-async function connectWithRetry(maxRetries = 5, delay = 5000) {
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            console.log(`🚀 Tentative de connexion... (${i + 1}/${maxRetries})`);
-            await client.login(process.env.DISCORD_TOKEN);
-            console.log('✅ Connexion réussie !');
-            return;
-        } catch (error) {
-            console.error(`❌ Erreur lors de la connexion (tentative ${i + 1}/${maxRetries}):`, error.message);
-            
-            if (error.code === 'TOKEN_INVALID') {
-                console.error('🔍 Token Discord invalide. Vérifiez votre variable DISCORD_TOKEN');
-                process.exit(1);
-            }
-            
-            if (i < maxRetries - 1) {
-                console.log(`⏳ Nouvelle tentative dans ${delay / 1000} secondes...`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-            } else {
-                console.error('❌ Impossible de se connecter après plusieurs tentatives');
-                console.error('🔍 Vérifiez votre connexion réseau et les paramètres Railway');
-                process.exit(1);
-            }
-        }
-    }
-}
-
-// Connexion du bot avec retry
-connectWithRetry();
+// Connexion du bot avec le token
+client.login(process.env.DISCORD_TOKEN)
+    .then(() => {
+        console.log('🚀 Tentative de connexion...');
+    })
+    .catch((error) => {
+        console.error('❌ Erreur lors de la connexion:', error);
+        console.error('🔍 Vérifiez que votre token Discord est valide');
+        process.exit(1);
+    });
 
 // Gestion de l'arrêt propre du bot
 process.on('SIGINT', () => {
