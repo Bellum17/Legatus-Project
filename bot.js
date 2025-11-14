@@ -114,7 +114,8 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildModeration // Pour détecter les bans/débans
     ]
 });
 
@@ -450,7 +451,37 @@ client.on(Events.GuildMemberRemove, async (member) => {
         
         // Retirer le captcha actif
         activeCaptchas.delete(userId);
+        
+        // Supprimer aussi de la base de données
+        try {
+            await pool.query('DELETE FROM active_captchas WHERE user_id = $1', [userId]);
+        } catch (error) {
+            console.error('❌ Erreur lors de la suppression du captcha de la BDD:', error);
+        }
+        
         console.log(`🚪 ${member.user.tag} a quitté le serveur, captcha nettoyé`);
+    }
+});
+
+// Gestion des débans (unban)
+client.on(Events.GuildBanRemove, async (ban) => {
+    const userId = ban.user.id;
+    
+    // Vérifier si c'était un ban pour captcha et reset les tentatives
+    try {
+        const result = await pool.query('SELECT attempts FROM failed_attempts WHERE user_id = $1', [userId]);
+        
+        if (result.rows.length > 0) {
+            // Supprimer les tentatives pour permettre une nouvelle chance
+            await pool.query('DELETE FROM failed_attempts WHERE user_id = $1', [userId]);
+            
+            // Supprimer du cache aussi
+            failedAttempts.delete(userId);
+            
+            console.log(`♻️ ${ban.user.tag} a été débanni - Tentatives de captcha réinitialisées`);
+        }
+    } catch (error) {
+        console.error('❌ Erreur lors de la réinitialisation des tentatives:', error);
     }
 });
 
@@ -559,8 +590,23 @@ client.on(Events.MessageCreate, async (message) => {
                 await message.channel.send({ embeds: [failEmbed] });
                 
                 if (member) {
-                    await member.ban({ reason: 'Échec du captcha après 3 tentatives' });
-                    console.log(`🚫 ${message.author.tag} BANNI après 3 tentatives ratées`);
+                    await member.ban({ reason: '[CAPTCHA] - Échec du captcha après 3 tentatives' });
+                    
+                    // Sauvegarder le ban dans la base de données pour le suivi
+                    try {
+                        await pool.query(`
+                            INSERT INTO failed_attempts (user_id, attempts, last_attempt)
+                            VALUES ($1, 3, CURRENT_TIMESTAMP)
+                            ON CONFLICT (user_id)
+                            DO UPDATE SET 
+                                attempts = 3,
+                                last_attempt = CURRENT_TIMESTAMP
+                        `, [message.author.id]);
+                    } catch (dbError) {
+                        console.error('❌ Erreur lors de la sauvegarde du ban:', dbError);
+                    }
+                    
+                    console.log(`🚫 ${message.author.tag} BANNI - Raison: [CAPTCHA] - Échec du captcha`);
                 }
             } catch (error) {
                 console.error('❌ Erreur lors du bannissement:', error);
