@@ -237,6 +237,17 @@ client.on(Events.GuildMemberAdd, async (member) => {
     const channel = member.guild.channels.cache.get(config.channelId);
     if (!channel) return;
 
+    // Attribuer le rôle de captcha au membre
+    try {
+        const captchaRole = member.guild.roles.cache.get(config.roleId);
+        if (captchaRole) {
+            await member.roles.add(captchaRole);
+            console.log(`🔐 Rôle de captcha attribué à ${member.user.tag}`);
+        }
+    } catch (error) {
+        console.error('❌ Erreur lors de l\'attribution du rôle de captcha:', error);
+    }
+
     // Générer le captcha
     const captchaText = generateCaptcha();
     const captchaImage = createCaptchaImage(captchaText);
@@ -245,7 +256,8 @@ client.on(Events.GuildMemberAdd, async (member) => {
     activeCaptchas.set(userId, {
         text: captchaText,
         guildId: member.guild.id,
-        attempts: 0
+        attempts: 0,
+        messageId: null
     });
 
     try {
@@ -259,16 +271,46 @@ client.on(Events.GuildMemberAdd, async (member) => {
             .setFooter({ text: `Tentative ${attempts + 1}/3 avant bannissement` })
             .setTimestamp();
 
-        await channel.send({
+        const captchaMessage = await channel.send({
             content: `${member}`,
             embeds: [embed],
             files: [attachment]
         });
 
+        // Stocker l'ID du message pour le supprimer plus tard
+        activeCaptchas.get(userId).messageId = captchaMessage.id;
+        activeCaptchas.get(userId).channelId = channel.id;
+
         console.log(`🛡️ Captcha envoyé à ${member.user.tag} sur ${member.guild.name}`);
 
     } catch (error) {
         console.error('❌ Erreur lors de l\'envoi du captcha:', error);
+    }
+});
+
+// Gestion des membres qui quittent
+client.on(Events.GuildMemberRemove, async (member) => {
+    const userId = member.user.id;
+    const captchaData = activeCaptchas.get(userId);
+    
+    if (captchaData) {
+        // Supprimer le message de captcha
+        try {
+            const channel = member.guild.channels.cache.get(captchaData.channelId);
+            if (channel && captchaData.messageId) {
+                const message = await channel.messages.fetch(captchaData.messageId);
+                if (message) {
+                    await message.delete();
+                    console.log(`🗑️ Message de captcha supprimé pour ${member.user.tag}`);
+                }
+            }
+        } catch (error) {
+            console.error('❌ Erreur lors de la suppression du message de captcha:', error);
+        }
+        
+        // Retirer le captcha actif
+        activeCaptchas.delete(userId);
+        console.log(`🚪 ${member.user.tag} a quitté le serveur, captcha nettoyé`);
     }
 });
 
@@ -291,7 +333,18 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     if (userAnswer === captchaData.text) {
-        // Bonne réponse
+        // Bonne réponse - Supprimer le message de captcha original
+        try {
+            if (captchaData.messageId) {
+                const captchaMessage = await message.channel.messages.fetch(captchaData.messageId);
+                if (captchaMessage) {
+                    await captchaMessage.delete();
+                }
+            }
+        } catch (error) {
+            console.error('❌ Erreur lors de la suppression du message de captcha:', error);
+        }
+        
         activeCaptchas.delete(message.author.id);
         
         try {
@@ -299,7 +352,8 @@ client.on(Events.MessageCreate, async (message) => {
             const role = message.guild.roles.cache.get(config.roleId);
             
             if (member && role) {
-                await member.roles.add(role);
+                // Retirer le rôle de captcha (le membre a validé)
+                await member.roles.remove(role);
                 
                 const successEmbed = new EmbedBuilder()
                     .setColor(0x00FF00)
@@ -307,12 +361,21 @@ client.on(Events.MessageCreate, async (message) => {
                     .setDescription(`${message.author}, vous avez été vérifié avec succès !\nVous avez maintenant accès au serveur.`)
                     .setTimestamp();
 
-                await message.channel.send({ embeds: [successEmbed] });
+                const successMessage = await message.channel.send({ embeds: [successEmbed] });
+                
+                // Supprimer le message de succès après 10 secondes
+                setTimeout(async () => {
+                    try {
+                        await successMessage.delete();
+                    } catch (err) {
+                        console.error('❌ Erreur lors de la suppression du message de succès:', err);
+                    }
+                }, 10000);
                 
                 console.log(`✅ ${message.author.tag} a réussi le captcha sur ${message.guild.name}`);
             }
         } catch (error) {
-            console.error('❌ Erreur lors de l\'attribution du rôle:', error);
+            console.error('❌ Erreur lors du retrait du rôle:', error);
         }
     } else {
         // Mauvaise réponse
@@ -343,7 +406,18 @@ client.on(Events.MessageCreate, async (message) => {
                 console.error('❌ Erreur lors de l\'expulsion:', error);
             }
         } else {
-            // Nouvelle tentative
+            // Nouvelle tentative - Supprimer l'ancien message de captcha
+            try {
+                if (captchaData.messageId) {
+                    const oldMessage = await message.channel.messages.fetch(captchaData.messageId);
+                    if (oldMessage) {
+                        await oldMessage.delete();
+                    }
+                }
+            } catch (error) {
+                console.error('❌ Erreur lors de la suppression de l\'ancien captcha:', error);
+            }
+            
             const captchaText = generateCaptcha();
             const captchaImage = createCaptchaImage(captchaText);
             captchaData.text = captchaText;
@@ -357,10 +431,14 @@ client.on(Events.MessageCreate, async (message) => {
                 .setImage('attachment://captcha.png')
                 .setTimestamp();
 
-            await message.channel.send({
+            const newCaptchaMessage = await message.channel.send({
+                content: `${message.author}`,
                 embeds: [retryEmbed],
                 files: [attachment]
             });
+            
+            // Mettre à jour l'ID du nouveau message
+            captchaData.messageId = newCaptchaMessage.id;
             
             console.log(`⚠️ ${message.author.tag} a raté une tentative (${captchaData.attempts}/3)`);
         }
