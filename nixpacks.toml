@@ -1,5 +1,8 @@
 [phases.setup]
-aptPkgs = ["fonts-dejavu-core", "fontconfig"]
+aptPkgs = ["fonts-dejavu-core", "fontconfig", "build-essential", "libcairo2-dev", "libpango1.0-dev", "libjpeg-dev", "libgif-dev", "librsvg2-dev"]
 
 [phases.install]
+cmds = ["npm install --production=false"]
+
+[phases.build]
 cmds = ["fc-cache -fv"]
