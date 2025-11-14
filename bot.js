@@ -311,8 +311,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 embeds: [new EmbedBuilder()
                     .setColor('#af6b6b')
                     .setTitle('<:DO_Icone_Valide:1436967853801869322> | Captcha activé')
-                    .setDescription(`Le système de captcha a été activé !\n\n**Salon :** ${channel}\n**Rôle captcha :** ${captchaRole}\n**Rôle vérifié :** ${verifiedRole}`)
-                    .setTimestamp()],
+                    .setDescription(`Le système de captcha a été activé !\n\n**Salon :** ${channel}\n**Rôle captcha :** ${captchaRole}\n**Rôle vérifié :** ${verifiedRole}`)],
                 ephemeral: true
             });
 
@@ -339,8 +338,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 embeds: [new EmbedBuilder()
                     .setColor('#af6b6b')
                     .setTitle('<:DO_Icone_Cle:1436971786418786395> | Captcha désactivé')
-                    .setDescription('Le système de captcha a été désactivé.')
-                    .setTimestamp()],
+                    .setDescription('Le système de captcha a été désactivé.')],
                 ephemeral: true
             });
 
@@ -389,8 +387,7 @@ client.on(Events.GuildMemberAdd, async (member) => {
             .setColor('#af6b6b')
             .setTitle('<:DO_Icone_Cle:1436971786418786395> | Captcha du serveur')
             .setDescription(`> Merci de remplir le Captcha ci-joint, pour ce faire, voici les conditions :\n> <:DO_Icone_Cle:1436971786418786395> | Tapez le captcha en majuscules uniquement.\n> <:DO_Icone_Valide:1436967853801869322> | Une fois tapé, vous obtiendrez le rôle <@&1438937587141185711> et vous pourrez accéder au reste du serveur.`)
-            .setImage('attachment://captcha.png')
-            .setTimestamp();
+            .setImage('attachment://captcha.png');
 
         const captchaMessage = await channel.send({
             content: `${member}`,
@@ -543,8 +540,7 @@ client.on(Events.MessageCreate, async (message) => {
                 const successEmbed = new EmbedBuilder()
                     .setColor('#af6b6b')
                     .setTitle('<:DO_Icone_Valide:1436967853801869322> | Captcha validé !')
-                    .setDescription(`${message.author}, vous avez été vérifié avec succès !\nVous avez maintenant accès au serveur.`)
-                    .setTimestamp();
+                    .setDescription(`${message.author}, vous avez été vérifié avec succès !\nVous avez maintenant accès au serveur.`);
 
                 const successMessage = await message.channel.send({ embeds: [successEmbed] });
                 
@@ -583,8 +579,7 @@ client.on(Events.MessageCreate, async (message) => {
                 const failEmbed = new EmbedBuilder()
                     .setColor('#af6b6b')
                     .setTitle('<:DO_Icone_Cle:1436971786418786395> | Échec du captcha')
-                    .setDescription(`${message.author}, vous avez épuisé vos 3 tentatives.\nVous allez être banni du serveur définitivement.`)
-                    .setTimestamp();
+                    .setDescription(`${message.author}, vous avez épuisé vos 3 tentatives.\nVous allez être banni du serveur définitivement.`);
 
                 await message.channel.send({ embeds: [failEmbed] });
                 
@@ -633,8 +628,7 @@ client.on(Events.MessageCreate, async (message) => {
                 .setColor('#af6b6b')
                 .setTitle('<:DO_Icone_Cle:1436971786418786395> | Code incorrect')
                 .setDescription(`${message.author}, le code est incorrect.\n\nVeuillez réessayer avec le nouveau captcha ci-dessous.\n\n**Tentatives restantes :** ${3 - captchaData.attempts}`)
-                .setImage('attachment://captcha.png')
-                .setTimestamp();
+                .setImage('attachment://captcha.png');
 
             const newCaptchaMessage = await message.channel.send({
                 content: `${message.author}`,
