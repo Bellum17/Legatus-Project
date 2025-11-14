@@ -5,7 +5,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Events, SlashCommandBuilder, REST, Routes, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ContainerBuilder, MediaGalleryBuilder, MediaGalleryItemBuilder, TextDisplayBuilder, SeparatorBuilder, MessageFlags, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ChannelType, AttachmentBuilder } = require('discord.js');
 const axios = require('axios');
 const express = require('express');
-const { createCanvas } = require('canvas');
+const { createCanvas, registerFont } = require('canvas');
 
 // Configuration du serveur Express pour Railway
 const app = express();
@@ -73,7 +73,7 @@ function createCaptchaImage(text) {
         ctx.fillRect(Math.random() * 400, Math.random() * 150, 3, 3);
     }
 
-    // Configuration du texte avec police système sans-serif
+    // Configuration du texte - Utiliser plusieurs polices en fallback
     ctx.fillStyle = '#FFFFFF';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -93,11 +93,15 @@ function createCaptchaImage(text) {
         ctx.translate(x, y);
         ctx.rotate((Math.random() - 0.5) * 0.3);
         
-        // Taille de police variable
+        // Taille de police variable avec plusieurs polices en fallback
         const fontSize = 55 + Math.random() * 10;
-        ctx.font = `bold ${fontSize}px sans-serif`;
+        // Essayer plusieurs polices courantes qui devraient être disponibles
+        ctx.font = `bold ${fontSize}px "DejaVu Sans", "Arial", "Helvetica", "sans-serif"`;
         
-        // Dessiner le caractère
+        // Dessiner le caractère avec contour pour plus de visibilité
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1;
+        ctx.strokeText(text[i], 0, 0);
         ctx.fillText(text[i], 0, 0);
         
         ctx.restore();

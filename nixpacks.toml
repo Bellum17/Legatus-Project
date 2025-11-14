@@ -1,0 +1,5 @@
+[phases.setup]
+aptPkgs = ["fonts-dejavu-core", "fontconfig"]
+
+[phases.install]
+cmds = ["fc-cache -fv"]
