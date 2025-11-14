@@ -178,10 +178,10 @@ function createCaptchaImage(text) {
         ctx.restore();
     }
 
-    // Ajouter des lignes de bruit
+    // Ajouter des lignes de bruit PAR-DESSUS le texte
     for (let i = 0; i < 6; i++) {
-        ctx.strokeStyle = `rgba(255, 255, 255, ${Math.random() * 0.4 + 0.1})`;
-        ctx.lineWidth = 2 + Math.random() * 2;
+        ctx.strokeStyle = `rgba(255, 255, 255, ${Math.random() * 0.5 + 0.3})`;
+        ctx.lineWidth = 2 + Math.random() * 3;
         ctx.beginPath();
         ctx.moveTo(Math.random() * 400, Math.random() * 150);
         ctx.bezierCurveTo(
