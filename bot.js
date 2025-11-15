@@ -268,7 +268,43 @@ client.once(Events.ClientReady, async (readyClient) => {
                     .setRequired(true)
                     .setMinValue(1)
                     .setMaxValue(10000))
-            .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+            .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+        new SlashCommandBuilder()
+            .setName('bannissements')
+            .setDescription('Gérer les bannissements du serveur')
+            .addSubcommand(subcommand =>
+                subcommand
+                    .setName('bannir')
+                    .setDescription('Bannir un membre du serveur')
+                    .addUserOption(option =>
+                        option
+                            .setName('membre')
+                            .setDescription('Le membre à bannir')
+                            .setRequired(true))
+                    .addStringOption(option =>
+                        option
+                            .setName('raison')
+                            .setDescription('La raison du bannissement')
+                            .setRequired(true)))
+            .addSubcommand(subcommand =>
+                subcommand
+                    .setName('débannir')
+                    .setDescription('Débannir un utilisateur du serveur')
+                    .addStringOption(option =>
+                        option
+                            .setName('utilisateur')
+                            .setDescription('L\'ID de l\'utilisateur à débannir')
+                            .setRequired(true))
+                    .addStringOption(option =>
+                        option
+                            .setName('raison')
+                            .setDescription('La raison du débannissement')
+                            .setRequired(true)))
+            .addSubcommand(subcommand =>
+                subcommand
+                    .setName('liste')
+                    .setDescription('Afficher la liste des utilisateurs bannis'))
+            .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
     ].map(command => command.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -430,6 +466,143 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 await interaction.editReply({ embeds: [errorEmbed], ephemeral: true });
             } else {
                 await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+            }
+        }
+    }
+
+    if (interaction.commandName === 'bannissements') {
+        const subcommand = interaction.options.getSubcommand();
+
+        if (subcommand === 'bannir') {
+            const user = interaction.options.getUser('membre');
+            const raison = interaction.options.getString('raison');
+
+            try {
+                const member = await interaction.guild.members.fetch(user.id);
+                
+                const fullReason = `[RAISON] - ${raison}`;
+                await member.ban({ reason: fullReason });
+
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor('#af6b6b')
+                        .setTitle('🔨 | Membre banni')
+                        .setDescription(`> **${user.tag}** a été banni du serveur.\n> **Raison :** ${raison}`)],
+                    ephemeral: true
+                });
+
+                console.log(`🔨 ${user.tag} banni par ${interaction.user.tag} - Raison: ${fullReason}`);
+
+            } catch (error) {
+                console.error('Erreur lors du bannissement:', error);
+                
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor('#af6b6b')
+                        .setTitle('❌ | Erreur')
+                        .setDescription('Une erreur est survenue lors du bannissement.')],
+                    ephemeral: true
+                });
+            }
+        }
+
+        if (subcommand === 'débannir') {
+            const userId = interaction.options.getString('utilisateur');
+            const raison = interaction.options.getString('raison');
+
+            try {
+                const bans = await interaction.guild.bans.fetch();
+                const bannedUser = bans.get(userId);
+
+                if (!bannedUser) {
+                    await interaction.reply({
+                        embeds: [new EmbedBuilder()
+                            .setColor('#af6b6b')
+                            .setTitle('❌ | Utilisateur non trouvé')
+                            .setDescription('Cet utilisateur n\'est pas banni.')],
+                        ephemeral: true
+                    });
+                    return;
+                }
+
+                const fullReason = `[RAISON] - ${raison}`;
+                await interaction.guild.members.unban(userId, fullReason);
+
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor('#af6b6b')
+                        .setTitle('✅ | Utilisateur débanni')
+                        .setDescription(`> **${bannedUser.user.tag}** a été débanni du serveur.\n> **Raison :** ${raison}`)],
+                    ephemeral: true
+                });
+
+                console.log(`✅ ${bannedUser.user.tag} débanni par ${interaction.user.tag} - Raison: ${fullReason}`);
+
+            } catch (error) {
+                console.error('Erreur lors du débannissement:', error);
+                
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor('#af6b6b')
+                        .setTitle('❌ | Erreur')
+                        .setDescription('Une erreur est survenue lors du débannissement.')],
+                    ephemeral: true
+                });
+            }
+        }
+
+        if (subcommand === 'liste') {
+            try {
+                const bans = await interaction.guild.bans.fetch();
+
+                if (bans.size === 0) {
+                    await interaction.reply({
+                        embeds: [new EmbedBuilder()
+                            .setColor('#af6b6b')
+                            .setTitle('📋 | Liste des bannissements')
+                            .setDescription('> Aucun utilisateur banni.')],
+                        ephemeral: true
+                    });
+                    return;
+                }
+
+                // Créer la liste des bannis
+                let banList = '';
+                let count = 0;
+                
+                for (const [id, ban] of bans) {
+                    count++;
+                    const reason = ban.reason || 'Aucune raison spécifiée';
+                    banList += `> **${count}.** ${ban.user.tag} (${ban.user.id})\n> **Raison :** ${reason}\n\n`;
+                    
+                    // Discord limite les descriptions à 4096 caractères
+                    if (banList.length > 3800) {
+                        banList += `> ... et ${bans.size - count} autre(s)`;
+                        break;
+                    }
+                }
+
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor('#af6b6b')
+                        .setTitle('📋 | Liste des bannissements')
+                        .setDescription(banList)
+                        .setFooter({ text: `Total : ${bans.size} utilisateur(s) banni(s)` })],
+                    ephemeral: true
+                });
+
+                console.log(`📋 Liste des bannissements consultée par ${interaction.user.tag}`);
+
+            } catch (error) {
+                console.error('Erreur lors de la récupération de la liste des bannis:', error);
+                
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor('#af6b6b')
+                        .setTitle('❌ | Erreur')
+                        .setDescription('Une erreur est survenue lors de la récupération de la liste.')],
+                    ephemeral: true
+                });
             }
         }
     }
