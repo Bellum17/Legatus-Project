@@ -478,16 +478,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const raison = interaction.options.getString('raison');
 
             try {
-                const member = await interaction.guild.members.fetch(user.id);
-                
                 const fullReason = `[RAISON] - ${raison}`;
-                await member.ban({ reason: fullReason });
+                
+                // Bannir l'utilisateur (fonctionne avec ID ou membre présent)
+                await interaction.guild.members.ban(user.id, { reason: fullReason });
 
                 await interaction.reply({
                     embeds: [new EmbedBuilder()
                         .setColor('#af6b6b')
-                        .setTitle('🔨 | Membre banni')
-                        .setDescription(`> **${user.tag}** a été banni du serveur.\n> **Raison :** ${raison}`)],
+                        .setTitle('<:DO_Icone_Ban:1438706945677725736> | Utilisateur banni')
+                        .setDescription(`> <:DO_Icone_Personne:1439086733932236800> | **${user.tag}** a été banni du serveur.\n> <:DO_Icone_FicheModifier:1436970642531680306> | **Raison :** ${raison}`)],
                     ephemeral: true
                 });
 
@@ -499,7 +499,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 await interaction.reply({
                     embeds: [new EmbedBuilder()
                         .setColor('#af6b6b')
-                        .setTitle('❌ | Erreur')
+                        .setTitle('<:DO_Icone_Croix:1436967855273803826> | Erreur')
                         .setDescription('Une erreur est survenue lors du bannissement.')],
                     ephemeral: true
                 });
@@ -518,7 +518,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     await interaction.reply({
                         embeds: [new EmbedBuilder()
                             .setColor('#af6b6b')
-                            .setTitle('❌ | Utilisateur non trouvé')
+                            .setTitle('<:DO_Icone_Croix:1436967855273803826> | Utilisateur non trouvé')
                             .setDescription('Cet utilisateur n\'est pas banni.')],
                         ephemeral: true
                     });
@@ -531,8 +531,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 await interaction.reply({
                     embeds: [new EmbedBuilder()
                         .setColor('#af6b6b')
-                        .setTitle('✅ | Utilisateur débanni')
-                        .setDescription(`> **${bannedUser.user.tag}** a été débanni du serveur.\n> **Raison :** ${raison}`)],
+                        .setTitle('<:DO_Icone_Valide:1436967853801869322> | Utilisateur débanni')
+                        .setDescription(`> <:DO_Icone_Personne:1439086733932236800> | **${bannedUser.user.tag}** a été débanni du serveur.\n> <:DO_Icone_FicheModifier:1436970642531680306> | **Raison :** ${raison}`)],
                     ephemeral: true
                 });
 
@@ -544,7 +544,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 await interaction.reply({
                     embeds: [new EmbedBuilder()
                         .setColor('#af6b6b')
-                        .setTitle('❌ | Erreur')
+                        .setTitle('<:DO_Icone_Croix:1436967855273803826> | Erreur')
                         .setDescription('Une erreur est survenue lors du débannissement.')],
                     ephemeral: true
                 });
@@ -559,7 +559,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     await interaction.reply({
                         embeds: [new EmbedBuilder()
                             .setColor('#af6b6b')
-                            .setTitle('📋 | Liste des bannissements')
+                            .setTitle('<:DO_Icone_Liste:1436970080822099998> | Liste des bannissements')
                             .setDescription('> Aucun utilisateur banni.')],
                         ephemeral: true
                     });
@@ -572,8 +572,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 
                 for (const [id, ban] of bans) {
                     count++;
-                    const reason = ban.reason || 'Aucune raison spécifiée';
-                    banList += `> **${count}.** ${ban.user.tag} (${ban.user.id})\n> **Raison :** ${reason}\n\n`;
+                    // Enlever le préfixe [RAISON] - si présent
+                    let reason = ban.reason || 'Aucune raison spécifiée';
+                    if (reason.startsWith('[RAISON] - ')) {
+                        reason = reason.substring(11); // Enlever "[RAISON] - "
+                    }
+                    
+                    banList += `> <:DO_Icone_Personne:1439086733932236800> | ${ban.user.tag} - ${ban.user.id}\n> <:DO_Icone_Fiche:1436970640878993428> | **Raison :** ${reason}\n\n`;
                     
                     // Discord limite les descriptions à 4096 caractères
                     if (banList.length > 3800) {
@@ -585,9 +590,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 await interaction.reply({
                     embeds: [new EmbedBuilder()
                         .setColor('#af6b6b')
-                        .setTitle('📋 | Liste des bannissements')
-                        .setDescription(banList)
-                        .setFooter({ text: `Total : ${bans.size} utilisateur(s) banni(s)` })],
+                        .setTitle('<:DO_Icone_Liste:1436970080822099998> | Liste des bannissements')
+                        .setDescription(banList)],
                     ephemeral: true
                 });
 
@@ -599,7 +603,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 await interaction.reply({
                     embeds: [new EmbedBuilder()
                         .setColor('#af6b6b')
-                        .setTitle('❌ | Erreur')
+                        .setTitle('<:DO_Icone_Croix:1436967855273803826> | Erreur')
                         .setDescription('Une erreur est survenue lors de la récupération de la liste.')],
                     ephemeral: true
                 });
