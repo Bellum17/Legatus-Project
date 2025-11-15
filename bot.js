@@ -231,45 +231,6 @@ client.once(Events.ClientReady, async (readyClient) => {
     // Enregistrer les commandes slash
     const commands = [
         new SlashCommandBuilder()
-            .setName('captcha')
-            .setDescription('Gérer le système de captcha')
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('activer')
-                    .setDescription('Activer le système de captcha')
-                    .addChannelOption(option =>
-                        option
-                            .setName('salon')
-                            .setDescription('Le salon où envoyer le captcha')
-                            .setRequired(true)
-                            .addChannelTypes(ChannelType.GuildText))
-                    .addRoleOption(option =>
-                        option
-                            .setName('role_captcha')
-                            .setDescription('Le rôle de captcha (donné aux nouveaux membres)')
-                            .setRequired(true))
-                    .addRoleOption(option =>
-                        option
-                            .setName('role_vérifié')
-                            .setDescription('Le rôle à donner après validation du captcha')
-                            .setRequired(true)))
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('désactiver')
-                    .setDescription('Désactiver le système de captcha'))
-            .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-        new SlashCommandBuilder()
-            .setName('purge')
-            .setDescription('Supprimer un nombre défini de messages')
-            .addIntegerOption(option =>
-                option
-                    .setName('nombre')
-                    .setDescription('Le nombre de messages à supprimer (1-10000)')
-                    .setRequired(true)
-                    .setMinValue(1)
-                    .setMaxValue(10000))
-            .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
-        new SlashCommandBuilder()
             .setName('bannissements')
             .setDescription('Gérer les bannissements du serveur')
             .addSubcommand(subcommand =>
@@ -318,7 +279,46 @@ client.once(Events.ClientReady, async (readyClient) => {
                     .setName('raison')
                     .setDescription('La raison de l\'expulsion')
                     .setRequired(true))
-            .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
+            .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers),
+        new SlashCommandBuilder()
+            .setName('captcha')
+            .setDescription('Gérer le système de captcha')
+            .addSubcommand(subcommand =>
+                subcommand
+                    .setName('activer')
+                    .setDescription('Activer le système de captcha')
+                    .addChannelOption(option =>
+                        option
+                            .setName('salon')
+                            .setDescription('Le salon où envoyer le captcha')
+                            .setRequired(true)
+                            .addChannelTypes(ChannelType.GuildText))
+                    .addRoleOption(option =>
+                        option
+                            .setName('role_captcha')
+                            .setDescription('Le rôle de captcha (donné aux nouveaux membres)')
+                            .setRequired(true))
+                    .addRoleOption(option =>
+                        option
+                            .setName('role_vérifié')
+                            .setDescription('Le rôle à donner après validation du captcha')
+                            .setRequired(true)))
+            .addSubcommand(subcommand =>
+                subcommand
+                    .setName('désactiver')
+                    .setDescription('Désactiver le système de captcha'))
+            .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        new SlashCommandBuilder()
+            .setName('purge')
+            .setDescription('Supprimer un nombre défini de messages')
+            .addIntegerOption(option =>
+                option
+                    .setName('nombre')
+                    .setDescription('Le nombre de messages à supprimer (1-10000)')
+                    .setRequired(true)
+                    .setMinValue(1)
+                    .setMaxValue(10000))
+            .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
     ].map(command => command.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
