@@ -304,7 +304,21 @@ client.once(Events.ClientReady, async (readyClient) => {
                 subcommand
                     .setName('liste')
                     .setDescription('Afficher la liste des utilisateurs bannis'))
-            .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+            .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
+        new SlashCommandBuilder()
+            .setName('expulser')
+            .setDescription('Expulser un membre du serveur')
+            .addUserOption(option =>
+                option
+                    .setName('membre')
+                    .setDescription('Le membre à expulser')
+                    .setRequired(true))
+            .addStringOption(option =>
+                option
+                    .setName('raison')
+                    .setDescription('La raison de l\'expulsion')
+                    .setRequired(true))
+            .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
     ].map(command => command.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -608,6 +622,50 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     ephemeral: true
                 });
             }
+        }
+    }
+
+    if (interaction.commandName === 'expulser') {
+        const user = interaction.options.getUser('membre');
+        const raison = interaction.options.getString('raison');
+
+        try {
+            const member = await interaction.guild.members.fetch(user.id);
+            
+            if (!member.kickable) {
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor('#af6b6b')
+                        .setTitle('<:DO_Icone_Croix:1436967855273803826> | Erreur')
+                        .setDescription('Je ne peux pas expulser ce membre.')],
+                    ephemeral: true
+                });
+                return;
+            }
+
+            const fullReason = `[RAISON] - ${raison}`;
+            await member.kick(fullReason);
+
+            await interaction.reply({
+                embeds: [new EmbedBuilder()
+                    .setColor('#af6b6b')
+                    .setTitle('<:DO_Icone_Expulsion:1439088049324560434> | Utilisateur expulsé')
+                    .setDescription(`> <:DO_Icone_Personne:1439086733932236800> | **${user.tag}** a été expulsé du serveur.\n> <:DO_Icone_FicheModifier:1436970642531680306> | **Raison :** ${raison}`)],
+                ephemeral: true
+            });
+
+            console.log(`👢 ${user.tag} expulsé par ${interaction.user.tag} - Raison: ${fullReason}`);
+
+        } catch (error) {
+            console.error('Erreur lors de l\'expulsion:', error);
+            
+            await interaction.reply({
+                embeds: [new EmbedBuilder()
+                    .setColor('#af6b6b')
+                    .setTitle('<:DO_Icone_Croix:1436967855273803826> | Erreur')
+                    .setDescription('Une erreur est survenue lors de l\'expulsion.')],
+                ephemeral: true
+            });
         }
     }
 });
